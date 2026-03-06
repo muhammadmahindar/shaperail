@@ -80,17 +80,17 @@ Example: `/milestone 1` builds Core Types. `/milestone 14` builds Multi-DB suppo
 ---
 
 ### M04 — REST Handlers
-**Crate:** `steel-runtime` | **Status:** [ ]
+**Crate:** `steel-runtime` | **Status:** [x]
 
 **Deliverables:**
-- [ ] Handler generator: ResourceDefinition → Actix-web handlers for every declared endpoint
-- [ ] Response envelope: `{ "data": [...], "meta": { "cursor", "has_more", "total" } }` for list
-- [ ] Single record response: `{ "data": { ... } }` for get/create/update
-- [ ] Field selection: `?fields=name,email` trims response to declared fields
-- [ ] Relation loading: `?include=organization` triggers join for belongs_to relations
-- [ ] Bulk endpoints: bulk_create (up to 500), bulk_delete
-- [ ] Route registration: ResourceDefinition → Actix ServiceConfig
-- [ ] Integration tests: 200, 404, 422, 401, 403 for every endpoint type
+- [x] Handler generator: ResourceDefinition → Actix-web handlers for every declared endpoint
+- [x] Response envelope: `{ "data": [...], "meta": { "cursor", "has_more", "total" } }` for list
+- [x] Single record response: `{ "data": { ... } }` for get/create/update
+- [x] Field selection: `?fields=name,email` trims response to declared fields
+- [x] Relation loading: `?include=organization` triggers join for belongs_to relations
+- [x] Bulk endpoints: bulk_create (up to 500), bulk_delete
+- [x] Route registration: ResourceDefinition → Actix ServiceConfig
+- [x] Integration tests: 200, 404, 422, 401, 403 for every endpoint type
 
 **Acceptance Criteria:**
 - Response shape is consistent — same envelope for every endpoint
@@ -99,17 +99,17 @@ Example: `/milestone 1` builds Core Types. `/milestone 14` builds Multi-DB suppo
 ---
 
 ### M05 — Auth System
-**Crate:** `steel-runtime` | **Status:** [ ]
+**Crate:** `steel-runtime` | **Status:** [x]
 
 **Deliverables:**
-- [ ] JWT middleware: validates Bearer token, attaches AuthUser to request
-- [ ] `AuthenticatedUser` Actix extractor: returns 401 if no valid JWT
-- [ ] RBAC enforcement from EndpointSpec.auth against token claims
-- [ ] Owner check: `AuthRule::Owner` → resource.created_by == auth_user.id
-- [ ] API key auth: X-API-Key header as alternative to JWT
-- [ ] Rate limiting: sliding window per IP + per token via Redis, configurable per endpoint
-- [ ] JWT issue + refresh token endpoint (used by `steel init` auth scaffold)
-- [ ] Tests: 401 no token, 403 wrong role, 200 correct role, owner allows own, owner blocks other's
+- [x] JWT middleware: validates Bearer token, attaches AuthUser to request
+- [x] `AuthenticatedUser` Actix extractor: returns 401 if no valid JWT
+- [x] RBAC enforcement from EndpointSpec.auth against token claims
+- [x] Owner check: `AuthRule::Owner` → resource.created_by == auth_user.id
+- [x] API key auth: X-API-Key header as alternative to JWT
+- [x] Rate limiting: sliding window per IP + per token via Redis, configurable per endpoint
+- [x] JWT issue + refresh token endpoint (used by `steel init` auth scaffold)
+- [x] Tests: 401 no token, 403 wrong role, 200 correct role, owner allows own, owner blocks other's
 
 **Acceptance Criteria:**
 - JWT secret from env var `JWT_SECRET` (never hardcoded)
@@ -118,16 +118,16 @@ Example: `/milestone 1` builds Core Types. `/milestone 14` builds Multi-DB suppo
 ---
 
 ### M06 — Redis Caching
-**Crate:** `steel-runtime` | **Status:** [ ]
+**Crate:** `steel-runtime` | **Status:** [x]
 
 **Deliverables:**
-- [ ] Redis client via deadpool-redis, pool from REDIS_URL
-- [ ] Cache middleware: GET endpoints with `cache.ttl` check Redis before DB
-- [ ] Cache key: `steel:<resource>:<endpoint>:<query_hash>:<user_role>`
-- [ ] Auto-invalidation: create/update/delete deletes all keys for that resource
-- [ ] `invalidate_on` from endpoint spec controls which operations bust cache
-- [ ] Cache bypass: `?nocache=1` or admin role
-- [ ] Tests: cache hit = 0 DB queries on second request, write invalidates, bypass works
+- [x] Redis client via deadpool-redis, pool from REDIS_URL
+- [x] Cache middleware: GET endpoints with `cache.ttl` check Redis before DB
+- [x] Cache key: `steel:<resource>:<endpoint>:<query_hash>:<user_role>`
+- [x] Auto-invalidation: create/update/delete deletes all keys for that resource
+- [x] `invalidate_on` from endpoint spec controls which operations bust cache
+- [x] Cache bypass: `?nocache=1` or admin role
+- [x] Tests: cache hit = 0 DB queries on second request, write invalidates, bypass works
 
 **Acceptance Criteria:**
 - Cache hit verified by query count (not just response match)
