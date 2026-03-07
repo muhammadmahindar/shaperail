@@ -65,6 +65,16 @@ impl<'de> Deserialize<'de> for AuthRule {
     }
 }
 
+impl std::fmt::Display for AuthRule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Public => write!(f, "public"),
+            Self::Owner => write!(f, "owner"),
+            Self::Roles(roles) => write!(f, "{}", roles.join(", ")),
+        }
+    }
+}
+
 impl AuthRule {
     /// Returns true if this rule allows public (unauthenticated) access.
     pub fn is_public(&self) -> bool {

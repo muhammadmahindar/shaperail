@@ -30,6 +30,29 @@ pub enum FieldType {
     File,
 }
 
+impl FieldType {
+    /// Returns the corresponding Rust type string for code generation.
+    pub fn to_rust_type(&self, nullable: bool, generated: bool) -> String {
+        let base = match self {
+            Self::Uuid => "uuid::Uuid",
+            Self::String | Self::Enum | Self::File => "String",
+            Self::Integer => "i32",
+            Self::Bigint => "i64",
+            Self::Number => "f64",
+            Self::Boolean => "bool",
+            Self::Timestamp => "chrono::DateTime<chrono::Utc>",
+            Self::Date => "chrono::NaiveDate",
+            Self::Json => "serde_json::Value",
+            Self::Array => "Vec<serde_json::Value>",
+        };
+        if nullable || generated {
+            format!("Option<{base}>")
+        } else {
+            base.to_string()
+        }
+    }
+}
+
 impl std::fmt::Display for FieldType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {

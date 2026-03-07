@@ -216,25 +216,25 @@ Example: `/milestone 1` builds Core Types. `/milestone 14` builds Multi-DB suppo
 ---
 
 ### M11 — CLI
-**Crate:** `steel-cli` | **Status:** [ ]
+**Crate:** `steel-cli` | **Status:** [x]
 
 **Deliverables (exact commands from PRD):**
-- [ ] `steel init <n>` — scaffold project with correct structure (all dirs + steel.config.yaml)
-- [ ] `steel generate` — run codegen for all resource files, write to generated/
-- [ ] `steel serve` — start dev server with hot reload via cargo-watch
-- [ ] `steel build` — release binary: `cargo build --release`
-- [ ] `steel build --docker` — generate Dockerfile + build scratch image ≤ 25 MB
-- [ ] `steel validate` — validate all resource files, report errors
-- [ ] `steel test` — run generated + custom tests
-- [ ] `steel migrate` — generate + apply SQL migration from resource diff
-- [ ] `steel migrate --rollback` — rollback last migration batch
-- [ ] `steel seed` — load fixture YAML files into DB
-- [ ] `steel export openapi` — output OpenAPI spec to stdout or --output file
-- [ ] `steel export sdk --lang ts` — generate TypeScript client SDK
-- [ ] `steel doctor` — check system deps: Rust, PostgreSQL, Redis, sqlx-cli
-- [ ] `steel routes` — print all routes with auth requirements
-- [ ] `steel jobs:status` — show job queue depth and recent failures
-- [ ] Tests: assert_cmd for every command, `steel init + steel serve` end-to-end test
+- [x] `steel init <n>` — scaffold project with correct structure (all dirs + steel.config.yaml)
+- [x] `steel generate` — run codegen for all resource files, write to generated/
+- [x] `steel serve` — start dev server with hot reload via cargo-watch
+- [x] `steel build` — release binary: `cargo build --release`
+- [x] `steel build --docker` — generate Dockerfile + build scratch image ≤ 25 MB
+- [x] `steel validate` — validate all resource files, report errors
+- [x] `steel test` — run generated + custom tests
+- [x] `steel migrate` — generate + apply SQL migration from resource diff
+- [x] `steel migrate --rollback` — rollback last migration batch
+- [x] `steel seed` — load fixture YAML files into DB
+- [x] `steel export openapi` — output OpenAPI spec to stdout or --output file
+- [x] `steel export sdk --lang ts` — generate TypeScript client SDK
+- [x] `steel doctor` — check system deps: Rust, PostgreSQL, Redis, sqlx-cli
+- [x] `steel routes` — print all routes with auth requirements
+- [x] `steel jobs:status` — show job queue depth and recent failures
+- [x] Tests: assert_cmd for every command, `steel init + steel serve` end-to-end test
 
 **Acceptance Criteria:**
 - `steel init myapp && cd myapp && steel serve` works end-to-end (PRD success metric)

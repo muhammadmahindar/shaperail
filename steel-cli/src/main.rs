@@ -1,9 +1,15 @@
+mod commands;
+
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process;
 
 #[derive(Parser)]
-#[command(name = "steel", about = "SteelAPI — AI-Native Rust Backend Framework")]
+#[command(
+    name = "steel",
+    about = "SteelAPI — AI-Native Rust Backend Framework",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -11,85 +17,104 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Validate resource YAML files
+    /// Scaffold a new SteelAPI project
+    Init {
+        /// Project name
+        name: String,
+    },
+    /// Run codegen for all resource files
+    Generate,
+    /// Start dev server with hot reload
+    Serve {
+        /// Port override
+        #[arg(short, long)]
+        port: Option<u16>,
+    },
+    /// Build release binary
+    Build {
+        /// Generate Dockerfile and build Docker image
+        #[arg(long)]
+        docker: bool,
+    },
+    /// Validate all resource files
     Validate {
         /// Path to a resource file or directory of resource files
+        #[arg(default_value = "resources")]
         path: PathBuf,
+    },
+    /// Run generated and custom tests
+    Test {
+        /// Additional arguments passed to cargo test
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
+    /// Generate and apply SQL migrations from resource files
+    Migrate {
+        /// Rollback the last migration batch
+        #[arg(long)]
+        rollback: bool,
+    },
+    /// Load fixture YAML files into the database
+    Seed {
+        /// Path to seed data directory
+        #[arg(default_value = "seeds")]
+        path: PathBuf,
+    },
+    /// Export OpenAPI spec or SDK
+    Export {
+        #[command(subcommand)]
+        format: ExportFormat,
+    },
+    /// Check system dependencies
+    Doctor,
+    /// Print all routes with auth requirements
+    Routes,
+    /// Show job queue depth and recent failures
+    #[command(name = "jobs:status")]
+    JobsStatus,
+}
+
+#[derive(Subcommand)]
+enum ExportFormat {
+    /// Output OpenAPI 3.1 spec
+    Openapi {
+        /// Write to file instead of stdout
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Generate client SDK
+    Sdk {
+        /// Target language (e.g., ts)
+        #[arg(short, long)]
+        lang: String,
+        /// Output directory
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
 }
 
 fn main() {
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::Validate { path } => {
-            let exit_code = cmd_validate(&path);
-            process::exit(exit_code);
-        }
-    }
-}
-
-fn cmd_validate(path: &std::path::Path) -> i32 {
-    let files = if path.is_dir() {
-        match collect_resource_files(path) {
-            Ok(files) => files,
-            Err(e) => {
-                eprintln!("Error reading directory: {e}");
-                return 1;
+    let exit_code = match cli.command {
+        Commands::Init { name } => commands::init::run(&name),
+        Commands::Generate => commands::generate::run(),
+        Commands::Serve { port } => commands::serve::run(port),
+        Commands::Build { docker } => commands::build::run(docker),
+        Commands::Validate { path } => commands::validate::run(&path),
+        Commands::Test { args } => commands::test::run(&args),
+        Commands::Migrate { rollback } => commands::migrate::run(rollback),
+        Commands::Seed { path } => commands::seed::run(&path),
+        Commands::Export { format } => match format {
+            ExportFormat::Openapi { output } => commands::export::run_openapi(output.as_deref()),
+            ExportFormat::Sdk { lang, output } => {
+                commands::export::run_sdk(&lang, output.as_deref())
             }
-        }
-    } else {
-        vec![path.to_path_buf()]
+        },
+        Commands::Doctor => commands::doctor::run(),
+        Commands::Routes => commands::routes::run(),
+        Commands::JobsStatus => commands::jobs_status::run(),
     };
 
-    if files.is_empty() {
-        eprintln!("No resource files found in {}", path.display());
-        return 1;
-    }
-
-    let mut has_errors = false;
-
-    for file in &files {
-        match steel_codegen::parser::parse_resource_file(file) {
-            Ok(rd) => {
-                let errors = steel_codegen::validator::validate_resource(&rd);
-                if errors.is_empty() {
-                    println!("\u{2713} {} valid", file.display());
-                } else {
-                    has_errors = true;
-                    eprintln!("\u{2717} {}", file.display());
-                    for err in &errors {
-                        eprintln!("  - {err}");
-                    }
-                }
-            }
-            Err(e) => {
-                has_errors = true;
-                eprintln!("\u{2717} {}: {e}", file.display());
-            }
-        }
-    }
-
-    if has_errors {
-        1
-    } else {
-        0
-    }
-}
-
-fn collect_resource_files(dir: &std::path::Path) -> Result<Vec<PathBuf>, std::io::Error> {
-    let mut files = Vec::new();
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_file() {
-            if let Some(ext) = path.extension() {
-                if ext == "yaml" || ext == "yml" {
-                    files.push(path);
-                }
-            }
-        }
-    }
-    files.sort();
-    Ok(files)
+    process::exit(exit_code);
 }
