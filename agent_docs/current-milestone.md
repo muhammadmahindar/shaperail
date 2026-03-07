@@ -1,12 +1,12 @@
 # Current Milestone
 
-**Completed:** M06 — Redis Caching
+**Completed:** M07 — Background Jobs
 **Crate:** steel-runtime
 **Version:** v2
 **Status:** [x] Complete
 
-**Next:** M07 — Background Jobs
+**Next:** M08 — WebSockets
 **Crate:** steel-runtime
 
-To work on next milestone: `/milestone 7`
+To work on next milestone: `/milestone 8`
 To jump to any milestone: `/milestone <number>`

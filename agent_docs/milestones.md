@@ -136,18 +136,18 @@ Example: `/milestone 1` builds Core Types. `/milestone 14` builds Multi-DB suppo
 ---
 
 ### M07 — Background Jobs
-**Crate:** `steel-runtime` | **Status:** [ ]
+**Crate:** `steel-runtime` | **Status:** [x]
 
 **Deliverables:**
-- [ ] `JobQueue` struct: enqueue(name, payload, priority) → job_id
-- [ ] Priority queues: critical, high, normal, low (separate Redis lists)
-- [ ] Worker: polls Redis, executes registered job handler, acks on success
-- [ ] Retry: exponential backoff, configurable max_retries per job
-- [ ] Dead letter queue: failed jobs move to `steel:jobs:dead` after max retries
-- [ ] Job status: pending/running/completed/failed queryable by job_id
-- [ ] Job timeout: auto-fail jobs exceeding configured duration
-- [ ] `ctx.jobs.enqueue()` available in HookContext
-- [ ] Tests: job executes, retries on failure, reaches dead letter, priority order
+- [x] `JobQueue` struct: enqueue(name, payload, priority) → job_id
+- [x] Priority queues: critical, high, normal, low (separate Redis lists)
+- [x] Worker: polls Redis, executes registered job handler, acks on success
+- [x] Retry: exponential backoff, configurable max_retries per job
+- [x] Dead letter queue: failed jobs move to `steel:jobs:dead` after max retries
+- [x] Job status: pending/running/completed/failed queryable by job_id
+- [x] Job timeout: auto-fail jobs exceeding configured duration
+- [x] `ctx.jobs.enqueue()` available in HookContext
+- [x] Tests: job executes, retries on failure, reaches dead letter, priority order
 
 **Acceptance Criteria:**
 - Worker runs in separate Tokio task — never blocks HTTP server
