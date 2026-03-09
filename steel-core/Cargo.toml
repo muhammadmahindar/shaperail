@@ -1,5 +1,7 @@
 [package]
 name = "steel-core"
+description = "Shared types for the SteelAPI framework"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
