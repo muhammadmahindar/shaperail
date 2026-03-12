@@ -1,19 +1,24 @@
-# Resource Guide
+---
+title: Resource guide
+description: The canonical YAML format for Shaperail resources and the keys that control generated runtime behavior.
+eyebrow: Schema reference
+---
 
-Shaperail’s resource YAML files are the source of truth. The runtime, routes,
-OpenAPI spec, validation, and migrations all start from these files.
+Resource files are the source of truth in Shaperail. Routes, validation,
+OpenAPI, query behavior, auth checks, and migration generation all start from
+the same YAML definition.
 
-## File Location
+## File location
 
-Canonical location:
+Place resources in:
 
 ```text
 resources/<resource-name>.yaml
 ```
 
-Use `.yaml`, not `.yml`, for the canonical resource format.
+Use `.yaml`, not `.yml`, for the canonical format.
 
-## Top-Level Keys
+## Top-level contract
 
 ```yaml
 resource:
@@ -31,32 +36,62 @@ Rules:
   generates no HTTP routes.
 - `relations` and `indexes` are optional.
 
-## Schema
-
-Schema fields use compact inline objects:
+## Example resource
 
 ```yaml
+resource: users
+version: 1
+
 schema:
   id:         { type: uuid, primary: true, generated: true }
-  title:      { type: string, min: 1, max: 200, required: true }
-  created_by: { type: uuid, required: true }
+  email:      { type: string, format: email, unique: true, required: true }
+  name:       { type: string, min: 1, max: 200, required: true }
+  role:       { type: enum, values: [admin, member, viewer], default: member }
+  org_id:     { type: uuid, ref: organizations.id, required: true }
   created_at: { type: timestamp, generated: true }
   updated_at: { type: timestamp, generated: true }
+
+endpoints:
+  list:
+    method: GET
+    path: /users
+    auth: [member, admin]
+    filters: [role, org_id]
+    search: [name, email]
+    pagination: cursor
+    sort: [created_at, name]
+
+  create:
+    method: POST
+    path: /users
+    auth: [admin]
+    input: [email, name, role, org_id]
+
+relations:
+  organization: { resource: organizations, type: belongs_to, key: org_id }
+
+indexes:
+  - { fields: [org_id, role] }
 ```
 
-Common constraints:
+## Schema fields
 
-- `primary: true`
-- `generated: true`
-- `required: true`
-- `unique: true`
-- `nullable: true`
-- `ref: other_resource.id`
-- `min` / `max`
-- `format: email|url|uuid`
-- `values: [...]` for enums
-- `default: value`
-- `sensitive: true`
+Schema fields use compact inline objects. Common flags:
+
+| Key | Meaning |
+| --- | --- |
+| `type` | Data type such as `uuid`, `string`, `integer`, `enum`, `timestamp`, `json`, or `file` |
+| `primary` | Marks the primary key |
+| `generated` | The runtime/database fills the value automatically |
+| `required` | Field must be present on writes |
+| `unique` | Adds uniqueness expectations and matching SQL index behavior |
+| `nullable` | Field may be null |
+| `ref` | Declares a relation target such as `organizations.id` |
+| `min` / `max` | String or numeric bounds |
+| `format` | Validation hint such as `email`, `url`, or `uuid` |
+| `values` | Allowed enum values |
+| `default` | Default value |
+| `sensitive` | Marks fields that should be treated carefully in logs and output |
 
 ## Endpoints
 
@@ -80,11 +115,13 @@ endpoints:
     input: [title, slug, body, status, created_by]
 ```
 
-Important rules:
+Important behavior:
 
-- `input` controls which fields are accepted on write endpoints.
-- `filters`, `search`, `pagination`, and `sort` only work if you declare them.
-- `soft_delete: true` adds a `deleted_at` workflow for delete endpoints.
+- `input` controls which fields are accepted for writes.
+- `filters`, `search`, `pagination`, and `sort` only exist when declared.
+- `soft_delete: true` changes delete semantics to a `deleted_at` workflow.
+- Hooks, jobs, events, and cache behavior are attached per endpoint, not
+  inferred globally.
 
 ## Relations
 
@@ -112,9 +149,10 @@ indexes:
   - { fields: [created_at], order: desc }
 ```
 
-## Recommended Field Pattern
+## Recommended resource shape
 
-For resources with writes and ownership checks, this shape works well:
+For resources with writes, sorting, and owner-based access, this pattern holds
+up well:
 
 ```yaml
 schema:
@@ -129,11 +167,9 @@ Why:
 
 - `id` is generated automatically
 - `created_by` works with `owner` auth rules
-- `created_at` and `updated_at` support sorting and history
+- timestamp fields support sorting, audit trails, and update tracking
 
-## Use The Example
+## See a complete example
 
-For a full reference, read:
-
-- [examples/blog-api/resources/posts.yaml](../examples/blog-api/resources/posts.yaml)
-- [examples/blog-api/resources/comments.yaml](../examples/blog-api/resources/comments.yaml)
+Use the [Blog API example](./blog-api-example.md) for a two-resource app with
+public reads, protected writes, relations, and checked-in migrations.

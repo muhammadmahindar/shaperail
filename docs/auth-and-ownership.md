@@ -1,8 +1,13 @@
-# Auth and Ownership
+---
+title: Auth and ownership
+description: Model public routes, role checks, owner-based access, and the request headers that carry credentials.
+eyebrow: Access control
+---
 
-Shaperail supports declarative endpoint auth rules in resource files.
+Shaperail lets you declare auth at the endpoint layer so the access contract
+stays next to the route definition.
 
-## Public Endpoints
+## Public endpoints
 
 ```yaml
 auth: public
@@ -10,15 +15,15 @@ auth: public
 
 No token is required.
 
-## Role-Based Endpoints
+## Role-based endpoints
 
 ```yaml
 auth: [admin, member]
 ```
 
-The request must carry a JWT or API key that maps to one of those roles.
+The request must carry credentials that map to one of those roles.
 
-## Owner-Based Endpoints
+## Owner-based endpoints
 
 ```yaml
 auth: owner
@@ -30,12 +35,13 @@ or:
 auth: [admin, owner]
 ```
 
-This is important:
+Important behavior:
 
-- `owner` checks the authenticated user against the record’s `created_by` field
+- `owner` checks the authenticated user against the record's `created_by` field
 - if the record does not have `created_by`, the ownership check fails
+- owner checks are best paired with role fallbacks such as `[admin, owner]`
 
-Recommended schema pattern:
+## Recommended schema pattern
 
 ```yaml
 schema:
@@ -54,7 +60,7 @@ endpoints:
     input: [title, body]
 ```
 
-## Headers
+## Request headers
 
 JWT:
 
@@ -68,23 +74,25 @@ API key:
 X-API-Key: <key>
 ```
 
-## What Shaperail Does Not Do Automatically
+## What Shaperail does not do automatically
 
-Shaperail does not currently auto-fill `created_by` from the token for you.
+Shaperail does not currently auto-fill `created_by` from the token.
 
-You must choose one of these approaches:
+You need to choose one of these patterns:
 
 - send `created_by` explicitly in the create payload
-- write a hook that sets or validates it before insert
+- use a hook that sets or validates it before insert
 
-## Practical Recommendation
+## Practical policy for first projects
 
-For first projects:
+| Route type | Recommended auth |
+| --- | --- |
+| Public content reads | `public` |
+| Authenticated writes | `[admin, member]` |
+| User-owned updates | `[admin, owner]` |
+| Destructive admin-only operations | `[admin]` |
 
-- make read endpoints `public`
-- use `[admin, member]` for create endpoints
-- use `[admin, owner]` for update and delete only if the resource includes
-  `created_by`
+## Example
 
-See [examples/blog-api/resources/posts.yaml](../examples/blog-api/resources/posts.yaml)
-for a concrete pattern.
+The [Blog API example](./blog-api-example.md) shows `owner`-based updates for
+both posts and comments using a shared `created_by` pattern.

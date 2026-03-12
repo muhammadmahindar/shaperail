@@ -2,6 +2,8 @@
 
 **The AI-native Rust backend framework.** Define your API in YAML, get a production-ready Rust server with zero boilerplate.
 
+[Documentation](https://shaperail.io) · [crates.io](https://crates.io/crates/shaperail-cli) · [Releases](https://github.com/shaperail/shaperail/releases)
+
 ```bash
 cargo install shaperail-cli
 shaperail init my-app
@@ -62,7 +64,7 @@ and a model.
 cargo install shaperail-cli
 
 # Or via install script (macOS/Linux)
-curl -fsSL https://shaperail.dev/install.sh | sh
+curl -fsSL https://shaperail.io/install.sh | sh
 ```
 
 ### Prerequisites
@@ -204,18 +206,18 @@ curl "http://localhost:3000/users?include=organization"
 
 ## User Guide
 
-Public user-facing docs now live in `docs/`. Start with:
+Public user-facing docs now live in the docs site and versioned `docs/`
+directory. Start with:
 
+- [Documentation site](https://shaperail.io)
 - [docs/README.md](./docs/README.md)
+- [docs/cli-reference.md](./docs/cli-reference.md)
 - [docs/getting-started.md](./docs/getting-started.md)
 - [docs/resource-guide.md](./docs/resource-guide.md)
 - [docs/auth-and-ownership.md](./docs/auth-and-ownership.md)
 - [docs/migrations-and-schema-changes.md](./docs/migrations-and-schema-changes.md)
 - [docs/docker-deployment.md](./docs/docker-deployment.md)
-
-The first complete example app files live in:
-
-- [examples/blog-api/README.md](./examples/blog-api/README.md)
+- [docs/blog-api-example.md](./docs/blog-api-example.md)
 
 These docs should remain the canonical framework guide because they version with
 the code. The GitHub wiki can still be useful, but it should stay secondary for

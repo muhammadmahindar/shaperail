@@ -1,6 +1,6 @@
 # shaperail-core
 
-Shared type definitions for the [Shaperail](https://github.com/shaperail/shaperail) framework.
+Shared type definitions for the [Shaperail](https://shaperail.io) framework.
 
 This crate provides the foundational types that all other Shaperail crates depend on:
 

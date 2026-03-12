@@ -1,32 +1,34 @@
-# Migrations and Schema Changes
+---
+title: Migrations and schema changes
+description: How resource edits turn into SQL files, what to review before you commit, and how Shaperail applies migrations at runtime.
+eyebrow: Database workflow
+---
 
-Shaperail treats your resource schema as the source of truth, but the running
+Shaperail treats resource YAML as the schema source of truth, but the running
 database still changes through SQL files in `migrations/`.
 
-## Initial State
+## Starting state
 
 `shaperail init` creates:
 
 - a starter resource
 - an initial SQL migration
 
-That means a new project can be started with:
+That means a new project should be able to boot with:
 
 ```bash
 docker compose up -d
 shaperail serve
 ```
 
-without writing SQL by hand.
+without writing SQL by hand first.
 
-## When You Change A Resource
-
-Typical workflow:
+## Workflow when a resource changes
 
 1. Edit `resources/*.yaml`
-2. Validate the file
-3. Generate a new migration
-4. Review the SQL
+2. Validate the resource file
+3. Create a new migration
+4. Review the generated SQL
 5. Run the app
 
 Commands:
@@ -37,42 +39,40 @@ shaperail migrate
 shaperail serve
 ```
 
-## Important Distinction
+## Important distinction
 
-- `shaperail migrate` creates and applies SQL migration files
-- `shaperail serve` applies the SQL files that already exist in `migrations/`
+- `shaperail migrate` creates new SQL migration files
+- `shaperail serve` applies the SQL files already present in `migrations/`
 
-## Review The SQL
+## Review the SQL before commit
 
-Do not treat generated SQL as invisible.
+Generated SQL should not be treated as invisible build output. Check:
 
-Before committing:
+- table names
+- `NOT NULL` constraints
+- enum checks
+- foreign keys
+- indexes
+- whether a delete route should be hard delete or soft delete
 
-- check table names
-- check `NOT NULL` constraints
-- check enum `CHECK` constraints
-- check foreign keys
-- check indexes
-- check whether a delete endpoint should be hard delete or soft delete
-
-## Roll Back
-
-If you need to revert the last applied migration batch:
+## Roll back a recent migration batch
 
 ```bash
 shaperail migrate --rollback
 ```
 
-## Current Tooling Note
+Use this for local recovery if the latest migration batch needs to be reversed.
 
-Today, `shaperail migrate` relies on `sqlx-cli`, so install it if you plan to
-use schema-driven migration generation:
+## Tooling note
+
+Today, `shaperail migrate` relies on `sqlx-cli`:
 
 ```bash
 cargo install sqlx-cli
 ```
 
-## Example
+## Example flow
 
-The example app in [examples/blog-api](../examples/blog-api/README.md) includes
-two checked-in migrations that match its resource files.
+The [Blog API example](./blog-api-example.md) includes two checked-in
+migrations that match its resource files, so you can inspect the schema-to-SQL
+relationship directly.

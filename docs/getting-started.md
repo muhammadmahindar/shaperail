@@ -1,6 +1,13 @@
-# Getting Started
+---
+title: Getting started
+description: Install the CLI, scaffold a new service, boot local dependencies with Docker, and verify the generated app end to end.
+eyebrow: Quickstart
+---
 
-## Prerequisites
+This guide gets you from zero to a running Shaperail service with browser docs,
+OpenAPI output, health checks, and a working local Postgres plus Redis setup.
+
+## What you need
 
 Required:
 
@@ -9,65 +16,72 @@ Required:
 
 Optional:
 
-- `sqlx-cli` if you plan to run `shaperail migrate`
-- `psql` and `redis-cli` for manual inspection
+- `sqlx-cli` if you plan to create new migrations with `shaperail migrate`
+- `psql` and `redis-cli` if you want to inspect services manually
 
-Check your machine with:
+Check your workstation with:
 
 ```bash
 shaperail doctor
 ```
 
-## Install
+## Install the CLI
+
+Cargo is the canonical install path:
 
 ```bash
 cargo install shaperail-cli
 ```
 
-## Create Your First App
+If you prefer a release binary on macOS or Linux:
+
+```bash
+curl -fsSL https://shaperail.io/install.sh | sh
+```
+
+## Scaffold a project
 
 ```bash
 shaperail init my-app
 cd my-app
 ```
 
-The scaffold gives you:
+The scaffold includes:
 
-- a working app shell
-- a sample `posts` resource
-- a starter migration
-- `.env` with local defaults
+- `resources/posts.yaml` as a starter resource
+- `migrations/` with an initial SQL migration
 - `docker-compose.yml` for Postgres and Redis
+- `.env` wired to that compose file
+- a generated app shell that serves docs, health checks, and metrics
 
-## Start Local Services
+## Boot local services
 
 ```bash
 docker compose up -d
 ```
 
-This is the default local development path. You should not need to create a
-database manually. The generated compose file sets `POSTGRES_DB`,
-`POSTGRES_USER`, and `POSTGRES_PASSWORD` so the app and database match out of
-the box.
+This is the intended local path. A Shaperail user should not have to create a
+database manually before the first run.
 
-## Start The App
+## Run the app
 
 ```bash
 shaperail serve
 ```
 
-Once the app boots, open:
+Verify the generated surfaces:
 
 - `http://localhost:3000/docs`
 - `http://localhost:3000/openapi.json`
 - `http://localhost:3000/health`
+- `http://localhost:3000/health/ready`
 
-## Edit The Resource
+## Make your first change
 
-The scaffold includes `resources/posts.yaml`. Change that file first instead of
-editing generated Rust code.
+Open `resources/posts.yaml` and change the schema or endpoint contract first.
+Avoid editing generated Rust files by hand.
 
-Useful commands:
+Useful commands while iterating:
 
 ```bash
 shaperail validate resources/posts.yaml
@@ -75,20 +89,28 @@ shaperail routes
 shaperail export openapi --output openapi.json
 ```
 
-## Change The Schema
+## When the schema changes
 
-When you add or remove fields:
+If you add or remove fields, create a migration and then run the app again:
 
 ```bash
 shaperail migrate
 shaperail serve
 ```
 
-`shaperail serve` applies the SQL files already present in `migrations/`.
+`shaperail serve` applies the SQL files that already exist in `migrations/`.
 
-## First Things To Check If Something Fails
+## Quick troubleshooting
 
-- If the app cannot connect to Postgres or Redis, run `docker compose ps`.
-- If port `3000`, `5432`, or `6379` is already in use, change the host port in
-  `docker-compose.yml` and update `.env` to match.
-- If `shaperail migrate` fails, make sure `sqlx-cli` is installed.
+| Problem | What to check |
+| --- | --- |
+| App cannot connect to Postgres or Redis | Run `docker compose ps` and confirm both services are healthy |
+| Port `3000`, `5432`, or `6379` is busy | Change the host-side port in `docker-compose.yml` and update `.env` to match |
+| `shaperail migrate` fails | Install `sqlx-cli` and confirm `DATABASE_URL` points at the same local Postgres service |
+| Docs page loads but API calls fail | Confirm `.env`, Docker ports, and `DATABASE_URL` are aligned |
+
+## Next pages
+
+- [CLI Reference](./cli-reference.md)
+- [Resource Guide](./resource-guide.md)
+- [Blog API Example](./blog-api-example.md)

@@ -5,6 +5,15 @@ All notable changes to Shaperail will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-03-13
+
+### Changed
+
+- Rebuilt the public documentation as a custom GitHub Pages site with structured navigation, professional styling, and release-aware layout metadata
+- Added first-class user guides for CLI workflows and the Blog API example so the published docs site is self-contained
+- Updated release-facing metadata and install/docs URLs to use `https://shaperail.io`
+- Removed the remaining Node 20-based GitHub Actions from CI and release workflows
+
 ## [0.2.1] - 2026-03-12
 
 ### Changed
@@ -35,5 +44,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Observability** — Structured JSON logging with request IDs, PII redaction, OpenTelemetry tracing, Prometheus metrics at `/metrics`, health checks at `/health` and `/health/ready`
 - **OpenAPI Generation** — Deterministic OpenAPI 3.1 spec generation from resource definitions, TypeScript SDK generation
 
+[0.2.2]: https://github.com/shaperail/shaperail/releases/tag/v0.2.2
 [0.2.1]: https://github.com/shaperail/shaperail/releases/tag/v0.2.1
 [0.2.0]: https://github.com/shaperail/shaperail/releases/tag/v0.2.0
