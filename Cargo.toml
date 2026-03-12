@@ -52,7 +52,7 @@ opentelemetry-otlp = "0.16"
 prometheus = { version = "0.14", default-features = false }
 
 # Auth
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 bcrypt = "0.15"
 
 # Types
