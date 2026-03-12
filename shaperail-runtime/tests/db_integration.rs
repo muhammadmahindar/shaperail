@@ -6,11 +6,15 @@
 //!
 //! Run with: cargo test -p shaperail-runtime --test db_integration
 
+use std::sync::Arc;
+
+use actix_web::{body::to_bytes, http::StatusCode, test::TestRequest, web};
 use indexmap::IndexMap;
-use shaperail_core::{FieldSchema, FieldType, ResourceDefinition};
+use shaperail_core::{EndpointSpec, FieldSchema, FieldType, HttpMethod, ResourceDefinition};
 use shaperail_runtime::db::{
     health_check, FilterParam, FilterSet, PageRequest, ResourceQuery, SortParam,
 };
+use shaperail_runtime::handlers::crud::{handle_delete, AppState};
 
 fn test_resource() -> ResourceDefinition {
     let mut schema = IndexMap::new();
@@ -189,6 +193,32 @@ fn test_resource() -> ResourceDefinition {
     }
 }
 
+fn test_resource_with_soft_delete_endpoint() -> ResourceDefinition {
+    let mut resource = test_resource();
+    let mut endpoints = IndexMap::new();
+    endpoints.insert(
+        "delete".to_string(),
+        EndpointSpec {
+            method: HttpMethod::Delete,
+            path: "/test_users/:id".to_string(),
+            auth: None,
+            input: None,
+            filters: None,
+            search: None,
+            pagination: None,
+            sort: None,
+            cache: None,
+            hooks: None,
+            events: None,
+            jobs: None,
+            upload: None,
+            soft_delete: true,
+        },
+    );
+    resource.endpoints = Some(endpoints);
+    resource
+}
+
 // All tests use #[sqlx::test] which provides:
 // - An isolated database per test (auto-created, auto-dropped)
 // - Auto-rollback on completion
@@ -250,7 +280,7 @@ async fn test_update_by_id(pool: sqlx::PgPool) {
 
 #[sqlx::test(migrations = "tests/fixtures/migrations")]
 async fn test_soft_delete(pool: sqlx::PgPool) {
-    let resource = test_resource();
+    let resource = test_resource_with_soft_delete_endpoint();
     let q = ResourceQuery::new(&resource, &pool);
 
     let org_id = uuid::Uuid::new_v4();
@@ -272,6 +302,82 @@ async fn test_soft_delete(pool: sqlx::PgPool) {
     // Double soft-delete should fail (already deleted)
     let result = q.soft_delete_by_id(&id).await;
     assert!(result.is_err());
+}
+
+#[sqlx::test(migrations = "tests/fixtures/migrations")]
+async fn test_update_by_id_ignores_soft_deleted_rows(pool: sqlx::PgPool) {
+    let resource = test_resource_with_soft_delete_endpoint();
+    let q = ResourceQuery::new(&resource, &pool);
+
+    let org_id = uuid::Uuid::new_v4();
+    let mut data = serde_json::Map::new();
+    data.insert(
+        "email".to_string(),
+        serde_json::json!("softupdate@example.com"),
+    );
+    data.insert("name".to_string(), serde_json::json!("Soft Update"));
+    data.insert("role".to_string(), serde_json::json!("viewer"));
+    data.insert("org_id".to_string(), serde_json::json!(org_id.to_string()));
+
+    let row = q.insert(&data).await.expect("Insert failed");
+    let id = uuid::Uuid::parse_str(row.0["id"].as_str().unwrap()).unwrap();
+    q.soft_delete_by_id(&id).await.expect("Soft delete failed");
+
+    let mut update_data = serde_json::Map::new();
+    update_data.insert("name".to_string(), serde_json::json!("Should not update"));
+
+    let result = q.update_by_id(&id, &update_data).await;
+    assert!(matches!(
+        result,
+        Err(shaperail_core::ShaperailError::NotFound)
+    ));
+}
+
+#[sqlx::test(migrations = "tests/fixtures/migrations")]
+async fn test_handle_delete_soft_delete_returns_no_content(pool: sqlx::PgPool) {
+    let resource = test_resource_with_soft_delete_endpoint();
+    let q = ResourceQuery::new(&resource, &pool);
+
+    let org_id = uuid::Uuid::new_v4();
+    let mut data = serde_json::Map::new();
+    data.insert(
+        "email".to_string(),
+        serde_json::json!("deletehandler@example.com"),
+    );
+    data.insert("name".to_string(), serde_json::json!("Delete Handler"));
+    data.insert("role".to_string(), serde_json::json!("admin"));
+    data.insert("org_id".to_string(), serde_json::json!(org_id.to_string()));
+
+    let row = q.insert(&data).await.expect("Insert failed");
+    let id = row.0["id"].as_str().unwrap().to_string();
+    let endpoint = resource
+        .endpoints
+        .as_ref()
+        .and_then(|endpoints| endpoints.get("delete"))
+        .cloned()
+        .expect("delete endpoint");
+    let state = Arc::new(AppState {
+        pool: pool.clone(),
+        resources: vec![resource.clone()],
+        jwt_config: None,
+        cache: None,
+        event_emitter: None,
+        job_queue: None,
+    });
+
+    let response = handle_delete(
+        TestRequest::delete().to_http_request(),
+        web::Data::new(state),
+        web::Data::new(Arc::new(resource)),
+        web::Data::new(Arc::new(endpoint)),
+        web::Path::from(id),
+    )
+    .await
+    .expect("Delete handler failed");
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let body = to_bytes(response.into_body()).await.expect("Read body");
+    assert!(body.is_empty());
 }
 
 #[sqlx::test(migrations = "tests/fixtures/migrations")]

@@ -340,8 +340,13 @@ impl<'a> ResourceQuery<'a> {
         }
 
         let pk = self.primary_key();
+        let soft_delete_clause = if self.has_soft_delete() {
+            " AND \"deleted_at\" IS NULL"
+        } else {
+            ""
+        };
         let sql = format!(
-            "UPDATE \"{}\" SET {} WHERE \"{}\" = ${} RETURNING {}",
+            "UPDATE \"{}\" SET {} WHERE \"{}\" = ${}{soft_delete_clause} RETURNING {}",
             self.table(),
             set_clauses.join(", "),
             pk,

@@ -474,7 +474,7 @@ pub async fn handle_delete(
     let (result, deleted_data) = if endpoint.soft_delete {
         let row = rq.soft_delete_by_id(&id).await?;
         let data = row.0.clone();
-        (response::single(row.0), data)
+        (response::no_content(), data)
     } else {
         let row = rq.hard_delete_by_id(&id).await?;
         (response::no_content(), row.0)
