@@ -5,7 +5,7 @@ Thank you for your interest in contributing to SteelAPI.
 ## Getting Started
 
 ```bash
-git clone https://github.com/your-org/steel-api.git
+git clone https://github.com/muhammadmahindar/steel-api.git
 cd steel-api
 docker compose up -d   # start Postgres + Redis
 cargo build --workspace

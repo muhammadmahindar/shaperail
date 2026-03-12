@@ -1,6 +1,7 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::path::PathBuf;
+use std::process::Command as StdCommand;
 use tempfile::TempDir;
 
 fn steel() -> Command {
@@ -63,7 +64,8 @@ fn serve_help() {
         .args(["serve", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("dev server"));
+        .stdout(predicate::str::contains("dev server"))
+        .stdout(predicate::str::contains("--check"));
 }
 
 #[test]
@@ -379,4 +381,51 @@ fn init_generates_valid_config() {
         .assert()
         .success()
         .stdout(predicate::str::contains("valid"));
+}
+
+#[test]
+fn serve_check_validates_scaffolded_project() {
+    let tmp = TempDir::new().unwrap();
+    let root = workspace_root();
+    let project_dir = tmp.path().join("serve-check");
+
+    steel()
+        .args(["init", "serve-check"])
+        .env("STEEL_DEV_WORKSPACE", root.to_str().unwrap())
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    steel()
+        .args(["serve", "--check"])
+        .current_dir(&project_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Serve check passed."))
+        .stdout(predicate::str::contains("Resources: 1"))
+        .stdout(predicate::str::contains("Command: cargo"));
+}
+
+#[test]
+fn init_scaffold_compiles_with_local_workspace_deps() {
+    let tmp = TempDir::new().unwrap();
+    let root = workspace_root();
+    let project_dir = tmp.path().join("compile-check");
+    let target_dir = root.join("target/scaffold-smoke");
+
+    steel()
+        .args(["init", "compile-check"])
+        .env("STEEL_DEV_WORKSPACE", root.to_str().unwrap())
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    let status = StdCommand::new("cargo")
+        .args(["check", "--offline"])
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .current_dir(&project_dir)
+        .status()
+        .unwrap();
+
+    assert!(status.success(), "scaffolded project should compile");
 }

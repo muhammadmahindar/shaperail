@@ -37,13 +37,13 @@ All 4 crates must have identical versions.
 
 ```bash
 # Update version in every Cargo.toml
-# workspace.package.version = "0.2.0"
+# workspace.package.version = "0.2.1"
 # Also update each crate's dependency on other steel-* crates
 
 # Commit the version bump
 git add .
-git commit -m "chore: bump version to 0.2.0"
-git tag v0.2.0
+git commit -m "chore: bump version to 0.2.1"
+git tag v0.2.1
 git push && git push --tags
 ```
 
@@ -138,8 +138,15 @@ Create `install.sh` at the repo root (served at steelapi.dev/install.sh):
 
 set -e
 
-VERSION="0.2.0"
-REPO="your-org/steel-api"
+VERSION="0.2.1"
+REPO="muhammadmahindar/steel-api"
+TMP_DIR=$(mktemp -d)
+
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+
+trap cleanup EXIT
 
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
@@ -156,11 +163,13 @@ case "$OS" in
   *) echo "Unsupported OS: $OS"; exit 1 ;;
 esac
 
-URL="https://github.com/${REPO}/releases/download/v${VERSION}/steel-${TARGET}"
+ARCHIVE="steel-${TARGET}.tar.gz"
+URL="https://github.com/${REPO}/releases/download/v${VERSION}/${ARCHIVE}"
 echo "Downloading steel ${VERSION} for ${TARGET}..."
-curl -fsSL "$URL" -o /tmp/steel
-chmod +x /tmp/steel
-sudo mv /tmp/steel /usr/local/bin/steel
+curl -fsSL "$URL" -o "${TMP_DIR}/${ARCHIVE}"
+tar -xzf "${TMP_DIR}/${ARCHIVE}" -C "${TMP_DIR}"
+chmod +x "${TMP_DIR}/steel"
+sudo mv "${TMP_DIR}/steel" /usr/local/bin/steel
 echo "steel installed successfully. Run: steel --version"
 ```
 

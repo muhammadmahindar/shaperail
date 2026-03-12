@@ -1,6 +1,9 @@
 use std::fs;
 use std::path::Path;
 
+const STEEL_VERSION: &str = env!("CARGO_PKG_VERSION");
+const DEV_WORKSPACE_ENV: &str = "STEEL_DEV_WORKSPACE";
+
 /// Scaffold a new SteelAPI project with the correct directory structure.
 pub fn run(name: &str) -> i32 {
     let project_dir = Path::new(name);
@@ -80,9 +83,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-steel-runtime = {{ version = "0.2" }}
-steel-core = {{ version = "0.2" }}
-steel-codegen = {{ version = "0.2" }}
+steel-runtime = {steel_runtime_dep}
+steel-core = {steel_core_dep}
+steel-codegen = {steel_codegen_dep}
 actix-web = "4"
 tokio = {{ version = "1", features = ["full"] }}
 sqlx = {{ version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "json"] }}
@@ -90,7 +93,10 @@ serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = {{ version = "0.3", features = ["env-filter"] }}
 dotenvy = "0.15"
-"#
+"#,
+        steel_runtime_dep = steel_dependency("steel-runtime"),
+        steel_core_dep = steel_dependency("steel-core"),
+        steel_codegen_dep = steel_dependency("steel-codegen")
     );
     write_file(&root.join("Cargo.toml"), &cargo_toml)?;
 
@@ -274,4 +280,15 @@ volumes:
 
 fn write_file(path: &Path, content: &str) -> Result<(), String> {
     fs::write(path, content).map_err(|e| format!("Failed to write {}: {e}", path.display()))
+}
+
+fn steel_dependency(crate_name: &str) -> String {
+    match std::env::var(DEV_WORKSPACE_ENV) {
+        Ok(workspace_root) if !workspace_root.is_empty() => {
+            let path = Path::new(&workspace_root).join(crate_name);
+            let path = path.to_string_lossy().replace('\\', "\\\\");
+            format!(r#"{{ version = "{STEEL_VERSION}", path = "{path}" }}"#)
+        }
+        _ => format!(r#"{{ version = "{STEEL_VERSION}" }}"#),
+    }
 }

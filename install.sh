@@ -4,9 +4,16 @@
 
 set -e
 
-VERSION="${STEEL_VERSION:-0.2.0}"
-REPO="your-org/steel-api"
+VERSION="${STEEL_VERSION:-0.2.1}"
+REPO="muhammadmahindar/steel-api"
 INSTALL_DIR="${STEEL_INSTALL_DIR:-/usr/local/bin}"
+TMP_DIR="$(mktemp -d)"
+
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+
+trap cleanup EXIT
 
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
@@ -23,20 +30,22 @@ case "$OS" in
   *) echo "Unsupported OS: $OS. Use: cargo install steel-cli" && exit 1 ;;
 esac
 
-URL="https://github.com/${REPO}/releases/download/v${VERSION}/steel-${TARGET}"
+ARCHIVE="steel-${TARGET}.tar.gz"
+URL="https://github.com/${REPO}/releases/download/v${VERSION}/${ARCHIVE}"
 
 echo "Installing steel v${VERSION} for ${TARGET}..."
-curl -fsSL "$URL" -o /tmp/steel-download
-chmod +x /tmp/steel-download
+curl -fsSL "$URL" -o "${TMP_DIR}/${ARCHIVE}"
+tar -xzf "${TMP_DIR}/${ARCHIVE}" -C "$TMP_DIR"
+chmod +x "${TMP_DIR}/steel"
 
 if [ -w "$INSTALL_DIR" ]; then
-  mv /tmp/steel-download "${INSTALL_DIR}/steel"
+  mv "${TMP_DIR}/steel" "${INSTALL_DIR}/steel"
 else
-  sudo mv /tmp/steel-download "${INSTALL_DIR}/steel"
+  sudo mv "${TMP_DIR}/steel" "${INSTALL_DIR}/steel"
 fi
 
 echo ""
-echo "✅ steel installed to ${INSTALL_DIR}/steel"
+echo "steel installed to ${INSTALL_DIR}/steel"
 echo "   Run: steel --version"
 echo ""
 echo "Get started:"

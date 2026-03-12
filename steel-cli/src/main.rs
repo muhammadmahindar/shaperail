@@ -29,6 +29,9 @@ enum Commands {
         /// Port override
         #[arg(short, long)]
         port: Option<u16>,
+        /// Validate the project and print the resolved serve command without starting it
+        #[arg(long)]
+        check: bool,
     },
     /// Build release binary
     Build {
@@ -99,7 +102,7 @@ fn main() {
     let exit_code = match cli.command {
         Commands::Init { name } => commands::init::run(&name),
         Commands::Generate => commands::generate::run(),
-        Commands::Serve { port } => commands::serve::run(port),
+        Commands::Serve { port, check } => commands::serve::run(port, check),
         Commands::Build { docker } => commands::build::run(docker),
         Commands::Validate { path } => commands::validate::run(&path),
         Commands::Test { args } => commands::test::run(&args),

@@ -5,12 +5,13 @@ readme = "README.md"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+homepage.workspace = true
 repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-steel-core = { path = "../steel-core" }
+steel-core = { version = "0.2.1", path = "../steel-core" }
 actix-web = { workspace = true }
 actix-ws = { workspace = true }
 sqlx = { workspace = true }

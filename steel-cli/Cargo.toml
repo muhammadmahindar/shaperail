@@ -5,6 +5,7 @@ readme = "README.md"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+homepage.workspace = true
 repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -14,8 +15,8 @@ name = "steel"
 path = "src/main.rs"
 
 [dependencies]
-steel-codegen = { path = "../steel-codegen" }
-steel-core = { path = "../steel-core" }
+steel-codegen = { version = "0.2.1", path = "../steel-codegen" }
+steel-core = { version = "0.2.1", path = "../steel-core" }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

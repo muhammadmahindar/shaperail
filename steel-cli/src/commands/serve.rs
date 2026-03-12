@@ -1,7 +1,8 @@
+use std::path::Path;
 use std::process::Command;
 
 /// Start dev server with hot reload via cargo-watch.
-pub fn run(port: Option<u16>) -> i32 {
+pub fn run(port: Option<u16>, check: bool) -> i32 {
     let config = match super::load_config() {
         Ok(c) => c,
         Err(e) => {
@@ -9,6 +10,19 @@ pub fn run(port: Option<u16>) -> i32 {
             return 1;
         }
     };
+
+    let resources = match super::load_all_resources() {
+        Ok(resources) => resources,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            return 1;
+        }
+    };
+
+    if let Err(e) = validate_project_layout() {
+        eprintln!("Error: {e}");
+        return 1;
+    }
 
     let port = port.unwrap_or(config.port);
 
@@ -19,18 +33,29 @@ pub fn run(port: Option<u16>) -> i32 {
         .map(|o| o.status.success())
         .unwrap_or(false);
 
+    let command = serve_command(has_cargo_watch);
+
+    if check {
+        println!("Serve check passed.");
+        println!("Project: {}", config.project);
+        println!("Resources: {}", resources.len());
+        println!("Port: {port}");
+        println!(
+            "Hot reload: {}",
+            if has_cargo_watch {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+        println!("Command: cargo {}", command.join(" "));
+        return 0;
+    }
+
     if has_cargo_watch {
         println!("Starting dev server on port {port} with hot reload...");
         let status = Command::new("cargo")
-            .args([
-                "watch",
-                "-x",
-                &format!("run -- --port {port}"),
-                "-w",
-                "src",
-                "-w",
-                "resources",
-            ])
+            .args(&command)
             .env("STEEL_PORT", port.to_string())
             .status();
 
@@ -47,7 +72,7 @@ pub fn run(port: Option<u16>) -> i32 {
         println!("Starting dev server on port {port}...");
 
         let status = Command::new("cargo")
-            .args(["run"])
+            .args(&command)
             .env("STEEL_PORT", port.to_string())
             .status();
 
@@ -58,5 +83,25 @@ pub fn run(port: Option<u16>) -> i32 {
                 1
             }
         }
+    }
+}
+
+fn validate_project_layout() -> Result<(), String> {
+    if !Path::new("Cargo.toml").is_file() {
+        return Err("No Cargo.toml found. Run this from a SteelAPI project root.".into());
+    }
+
+    if !Path::new("src/main.rs").is_file() {
+        return Err("No src/main.rs found. Run `steel init <name>` to scaffold a project.".into());
+    }
+
+    Ok(())
+}
+
+fn serve_command(has_cargo_watch: bool) -> Vec<&'static str> {
+    if has_cargo_watch {
+        vec!["watch", "-x", "run", "-w", "src", "-w", "resources"]
+    } else {
+        vec!["run"]
     }
 }

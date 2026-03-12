@@ -1,6 +1,6 @@
 # steel-core
 
-Shared type definitions for the [SteelAPI](https://github.com/your-org/steel-api) framework.
+Shared type definitions for the [SteelAPI](https://github.com/muhammadmahindar/steel-api) framework.
 
 This crate provides the foundational types that all other SteelAPI crates depend on:
 

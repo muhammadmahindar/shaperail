@@ -1,6 +1,6 @@
 # steel-cli
 
-The developer-facing CLI for [SteelAPI](https://github.com/your-org/steel-api).
+The developer-facing CLI for [SteelAPI](https://github.com/muhammadmahindar/steel-api).
 
 ## Install
 

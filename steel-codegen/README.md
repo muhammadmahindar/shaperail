@@ -1,6 +1,6 @@
 # steel-codegen
 
-YAML parser, validator, and code generator for the [SteelAPI](https://github.com/your-org/steel-api) framework.
+YAML parser, validator, and code generator for the [SteelAPI](https://github.com/muhammadmahindar/steel-api) framework.
 
 ## What it does
 

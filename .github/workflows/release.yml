@@ -103,10 +103,10 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cargo publish -p steel-core --allow-dirty
+          cargo publish -p steel-core
           sleep 30
-          cargo publish -p steel-codegen --allow-dirty
+          cargo publish -p steel-codegen
           sleep 30
-          cargo publish -p steel-runtime --allow-dirty
+          cargo publish -p steel-runtime
           sleep 30
-          cargo publish -p steel-cli --allow-dirty
+          cargo publish -p steel-cli
