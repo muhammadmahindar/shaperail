@@ -62,7 +62,7 @@ publish_crate() {
       return 0
     fi
 
-    if grep -qi "already uploaded" <<<"${output}"; then
+    if grep -qi "already uploaded\|already exists on crates.io" <<<"${output}"; then
       echo "${crate} ${version} is already published. Continuing."
       return 0
     fi
