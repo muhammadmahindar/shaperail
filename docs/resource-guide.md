@@ -66,6 +66,10 @@ endpoints:
     path: /users
     auth: [admin]
     input: [email, name, role, org_id]
+    controller:
+      before: validate_org
+    events: [user.created]
+    jobs: [send_welcome_email]
 
 relations:
   organization: { resource: organizations, type: belongs_to, key: org_id }
@@ -73,6 +77,29 @@ relations:
 indexes:
   - { fields: [org_id, role] }
 ```
+
+## API versioning
+
+The `version` field on each resource drives URL path prefixing. All endpoints
+for a resource are registered under `/v{version}/...`:
+
+```yaml
+resource: users
+version: 1    # endpoints register under /v1/users, /v1/users/{id}, etc.
+```
+
+```yaml
+resource: orders
+version: 2    # endpoints register under /v2/orders, /v2/orders/{id}, etc.
+```
+
+The version prefix appears in:
+- All HTTP routes at runtime
+- The OpenAPI spec paths
+- The output of `shaperail routes`
+
+Each resource carries its own version independently. When you scaffold a new
+project with `shaperail init`, resources default to `version: 1`.
 
 ## Schema fields
 
@@ -134,6 +161,18 @@ endpoints:
     input: [title, slug, body, status, created_by]
 ```
 
+### Supported endpoint actions
+
+| Action | Method | Typical path | Description |
+| --- | --- | --- | --- |
+| `list` | GET | `/resources` | List with pagination, filters, sort, search |
+| `get` | GET | `/resources/:id` | Fetch a single record by ID |
+| `create` | POST | `/resources` | Create a single record |
+| `update` | PATCH | `/resources/:id` | Update a single record |
+| `delete` | DELETE | `/resources/:id` | Delete (or soft-delete) a single record |
+| `bulk_create` | POST | `/resources/bulk` | Create multiple records in one request |
+| `bulk_delete` | DELETE | `/resources/bulk` | Delete multiple records by ID list |
+
 ### Endpoint attributes
 
 | Key | Meaning |
@@ -147,7 +186,7 @@ endpoints:
 | `pagination` | `cursor` (default) or `offset` |
 | `sort` | Fields available for sorting: `?sort=-created_at,name` |
 | `cache` | Cache config: `{ ttl: 60 }` or `{ ttl: 60, invalidate_on: [users.updated] }` |
-| `hooks` | Hook functions to run before/after the operation |
+| `controller` | Synchronous business logic: `{ before: fn, after: fn }`. See [Controllers]({{ '/controllers/' | relative_url }}). |
 | `events` | Events to emit on success (e.g., `[user.created]`) |
 | `jobs` | Background jobs to enqueue on success (e.g., `[send_welcome_email]`) |
 | `upload` | Multipart file upload config: `{ field: avatar, storage: s3, max_size: 5mb }` |
@@ -159,7 +198,7 @@ Important behavior:
 - `filters`, `search`, `pagination`, and `sort` only exist when declared.
 - `soft_delete: true` changes delete semantics to a `deleted_at` workflow.
   Requires an `updated_at` field in the schema.
-- Hooks, jobs, events, and cache behavior are attached per endpoint, not
+- Controllers, jobs, events, and cache behavior are attached per endpoint, not
   inferred globally.
 - Every create/update/delete automatically emits an event (`resource.action`)
   regardless of the `events` list.

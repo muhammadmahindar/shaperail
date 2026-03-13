@@ -187,7 +187,12 @@ Each target has a `type` field that determines the remaining fields:
 | `job` | `name` | Enqueue a background job by name. |
 | `webhook` | `url` | POST to an external URL. |
 | `channel` | `name`, `room` (optional) | Broadcast to a WebSocket channel. `room` scopes the broadcast. |
-| `hook` | `name` | Execute a hook function. |
+| `hook` | `name` | Execute a server-side event handler function by name. |
+
+Note: the `hook` event target type in subscriber configuration is separate from
+endpoint-level business logic. For synchronous request-lifecycle logic (input
+validation, response enrichment), use `controller:` on endpoints — see
+[Controllers]({{ '/controllers/' | relative_url }}).
 
 #### `events.webhooks`
 

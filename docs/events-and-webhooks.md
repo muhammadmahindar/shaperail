@@ -90,7 +90,11 @@ Subscribers match events using these patterns:
 | `job`     | `name`           | Enqueues a background job by name               |
 | `webhook` | `url`            | POSTs the event payload to an external URL      |
 | `channel` | `name`, `room`   | Broadcasts to a WebSocket channel and room      |
-| `hook`    | `name`           | Executes a named hook function                  |
+| `hook`    | `name`           | Executes a named server-side event handler function |
+
+Note: the `hook` event target type runs asynchronously in response to events. It
+is separate from endpoint-level [controllers]({{ '/controllers/' | relative_url }}),
+which run synchronously within the HTTP request.
 
 ## Outbound webhooks
 

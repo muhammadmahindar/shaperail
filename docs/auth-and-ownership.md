@@ -112,7 +112,7 @@ Shaperail does not currently auto-fill `created_by` from the token.
 You need to choose one of these patterns:
 
 - send `created_by` explicitly in the create payload
-- use a hook that sets or validates it before insert
+- use a [controller]({{ '/controllers/' | relative_url }}) that sets or validates it before insert
 
 ## Practical policy for first projects
 
