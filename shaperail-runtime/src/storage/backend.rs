@@ -90,14 +90,9 @@ pub enum StorageBackend {
 }
 
 impl StorageBackend {
-    /// Create a storage backend from the `SHAPERAIL_STORAGE_BACKEND` env var.
-    ///
-    /// Supported values: `local`, `s3`, `gcs`, `azure`.
-    /// Defaults to `local` if not set.
-    pub fn from_env() -> Result<Self, StorageError> {
-        let backend =
-            std::env::var("SHAPERAIL_STORAGE_BACKEND").unwrap_or_else(|_| "local".to_string());
-        match backend.as_str() {
+    /// Create a storage backend from an explicit backend name.
+    pub fn from_name(name: &str) -> Result<Self, StorageError> {
+        match name {
             "local" => Ok(Self::Local(super::LocalStorage::from_env())),
             "s3" => super::S3Storage::from_env().map(Self::S3),
             "gcs" => super::GcsStorage::from_env().map(Self::Gcs),
@@ -106,6 +101,16 @@ impl StorageBackend {
                 "Unknown storage backend: '{other}'. Supported: local, s3, gcs, azure"
             ))),
         }
+    }
+
+    /// Create a storage backend from the `SHAPERAIL_STORAGE_BACKEND` env var.
+    ///
+    /// Supported values: `local`, `s3`, `gcs`, `azure`.
+    /// Defaults to `local` if not set.
+    pub fn from_env() -> Result<Self, StorageError> {
+        let backend =
+            std::env::var("SHAPERAIL_STORAGE_BACKEND").unwrap_or_else(|_| "local".to_string());
+        Self::from_name(&backend)
     }
 
     /// Upload file data to storage under the given `path`.

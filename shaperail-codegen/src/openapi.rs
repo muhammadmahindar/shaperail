@@ -74,10 +74,12 @@ pub fn generate(config: &ProjectConfig, resources: &[ResourceDefinition]) -> ser
             sorted_endpoints.sort_by_key(|(name, _)| *name);
 
             for (action, ep) in sorted_endpoints {
-                let openapi_path = ep.path.replace(":id", "{id}");
+                let openapi_path =
+                    format!("/v{}{}", resource.version, ep.path.replace(":id", "{id}"));
                 let method = ep.method.to_string().to_lowercase();
 
-                let operation = build_operation(&struct_name, &resource.resource, action, ep);
+                let operation =
+                    build_operation(&struct_name, resource, &resource.resource, action, ep);
 
                 let entry = paths
                     .entry(openapi_path)
@@ -162,6 +164,45 @@ fn build_input_schema(
     for field_name in input_fields {
         if let Some(schema) = resource.schema.get(field_name) {
             properties.insert(field_name.clone(), field_schema_to_openapi(schema));
+            if is_create && schema.required {
+                required_fields.push(serde_json::Value::String(field_name.clone()));
+            }
+        }
+    }
+
+    let mut result = serde_json::json!({
+        "type": "object",
+        "properties": serde_json::Value::Object(properties.into_iter().collect()),
+    });
+
+    if !required_fields.is_empty() {
+        result["required"] = serde_json::Value::Array(required_fields);
+    }
+
+    result
+}
+
+fn build_multipart_input_schema(
+    resource: &ResourceDefinition,
+    input_fields: &[String],
+    upload_field: &str,
+    is_create: bool,
+) -> serde_json::Value {
+    let mut properties = BTreeMap::new();
+    let mut required_fields = Vec::new();
+
+    for field_name in input_fields {
+        if let Some(schema) = resource.schema.get(field_name) {
+            let property = if field_name == upload_field {
+                serde_json::json!({
+                    "type": "string",
+                    "format": "binary"
+                })
+            } else {
+                field_schema_to_openapi(schema)
+            };
+
+            properties.insert(field_name.clone(), property);
             if is_create && schema.required {
                 required_fields.push(serde_json::Value::String(field_name.clone()));
             }
@@ -273,6 +314,7 @@ fn field_schema_to_openapi(schema: &FieldSchema) -> serde_json::Value {
 
 fn build_operation(
     struct_name: &str,
+    resource: &ResourceDefinition,
     resource_name: &str,
     action: &str,
     ep: &EndpointSpec,
@@ -394,9 +436,22 @@ fn build_operation(
     // Request body
     if let Some(input_fields) = &ep.input {
         if !input_fields.is_empty() {
-            let input_schema_name = format!("{struct_name}{}Input", to_pascal_case(action));
-            operation.insert(
-                "requestBody".to_string(),
+            let request_body = if let Some(upload) = &ep.upload {
+                serde_json::json!({
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": build_multipart_input_schema(
+                                resource,
+                                input_fields,
+                                &upload.field,
+                                action == "create",
+                            )
+                        }
+                    }
+                })
+            } else {
+                let input_schema_name = format!("{struct_name}{}Input", to_pascal_case(action));
                 serde_json::json!({
                     "required": true,
                     "content": {
@@ -406,8 +461,10 @@ fn build_operation(
                             }
                         }
                     }
-                }),
-            );
+                })
+            };
+
+            operation.insert("requestBody".to_string(), request_body);
         }
     }
 
@@ -528,10 +585,18 @@ fn build_operation(
     }
 
     // Vendor extensions
-    if let Some(hooks) = &ep.hooks {
-        if !hooks.is_empty() {
-            operation.insert("x-shaperail-hooks".to_string(), serde_json::json!(hooks));
+    if let Some(controller) = &ep.controller {
+        let mut ctrl = serde_json::Map::new();
+        if let Some(before) = &controller.before {
+            ctrl.insert("before".to_string(), serde_json::json!(before));
         }
+        if let Some(after) = &controller.after {
+            ctrl.insert("after".to_string(), serde_json::json!(after));
+        }
+        operation.insert(
+            "x-shaperail-controller".to_string(),
+            serde_json::json!(ctrl),
+        );
     }
     if let Some(events) = &ep.events {
         if !events.is_empty() {
@@ -562,7 +627,7 @@ mod tests {
     use super::*;
     use indexmap::IndexMap;
     use shaperail_core::{
-        AuthRule, CacheSpec, FieldSchema, FieldType, HttpMethod, PaginationStyle,
+        AuthRule, CacheSpec, FieldSchema, FieldType, HttpMethod, PaginationStyle, UploadSpec,
     };
 
     fn test_config() -> ProjectConfig {
@@ -705,7 +770,7 @@ mod tests {
                     ttl: 60,
                     invalidate_on: None,
                 }),
-                hooks: None,
+                controller: None,
                 events: None,
                 jobs: None,
                 upload: None,
@@ -728,7 +793,10 @@ mod tests {
                 pagination: None,
                 sort: None,
                 cache: None,
-                hooks: Some(vec!["validate_org".to_string()]),
+                controller: Some(shaperail_core::ControllerSpec {
+                    before: Some("validate_org".to_string()),
+                    after: None,
+                }),
                 events: Some(vec!["user.created".to_string()]),
                 jobs: Some(vec!["send_welcome_email".to_string()]),
                 upload: None,
@@ -750,7 +818,7 @@ mod tests {
                 pagination: None,
                 sort: None,
                 cache: None,
-                hooks: None,
+                controller: None,
                 events: None,
                 jobs: None,
                 upload: None,
@@ -769,7 +837,7 @@ mod tests {
                 pagination: None,
                 sort: None,
                 cache: None,
-                hooks: None,
+                controller: None,
                 events: None,
                 jobs: None,
                 upload: None,
@@ -779,6 +847,105 @@ mod tests {
 
         ResourceDefinition {
             resource: "users".to_string(),
+            version: 1,
+            schema,
+            endpoints: Some(endpoints),
+            relations: None,
+            indexes: None,
+        }
+    }
+
+    fn upload_resource() -> ResourceDefinition {
+        let mut schema = IndexMap::new();
+        schema.insert(
+            "id".to_string(),
+            FieldSchema {
+                field_type: FieldType::Uuid,
+                primary: true,
+                generated: true,
+                required: false,
+                unique: false,
+                nullable: false,
+                reference: None,
+                min: None,
+                max: None,
+                format: None,
+                values: None,
+                default: None,
+                sensitive: false,
+                search: false,
+                items: None,
+            },
+        );
+        schema.insert(
+            "title".to_string(),
+            FieldSchema {
+                field_type: FieldType::String,
+                primary: false,
+                generated: false,
+                required: true,
+                unique: false,
+                nullable: false,
+                reference: None,
+                min: Some(serde_json::json!(1)),
+                max: Some(serde_json::json!(200)),
+                format: None,
+                values: None,
+                default: None,
+                sensitive: false,
+                search: false,
+                items: None,
+            },
+        );
+        schema.insert(
+            "attachment".to_string(),
+            FieldSchema {
+                field_type: FieldType::File,
+                primary: false,
+                generated: false,
+                required: true,
+                unique: false,
+                nullable: false,
+                reference: None,
+                min: None,
+                max: None,
+                format: None,
+                values: None,
+                default: None,
+                sensitive: false,
+                search: false,
+                items: None,
+            },
+        );
+
+        let mut endpoints = IndexMap::new();
+        endpoints.insert(
+            "create".to_string(),
+            EndpointSpec {
+                method: HttpMethod::Post,
+                path: "/assets".to_string(),
+                auth: None,
+                input: Some(vec!["title".to_string(), "attachment".to_string()]),
+                filters: None,
+                search: None,
+                pagination: None,
+                sort: None,
+                cache: None,
+                controller: None,
+                events: None,
+                jobs: None,
+                upload: Some(UploadSpec {
+                    field: "attachment".to_string(),
+                    storage: "local".to_string(),
+                    max_size: "5mb".to_string(),
+                    types: Some(vec!["image/png".to_string()]),
+                }),
+                soft_delete: false,
+            },
+        );
+
+        ResourceDefinition {
+            resource: "assets".to_string(),
             version: 1,
             schema,
             endpoints: Some(endpoints),
@@ -824,12 +991,12 @@ mod tests {
         let paths = spec["paths"].as_object().expect("paths object");
 
         // /users should have GET and POST
-        let users_path = paths.get("/users").expect("/users path");
-        assert!(users_path.get("get").is_some(), "GET /users");
-        assert!(users_path.get("post").is_some(), "POST /users");
+        let users_path = paths.get("/v1/users").expect("/v1/users path");
+        assert!(users_path.get("get").is_some(), "GET /v1/users");
+        assert!(users_path.get("post").is_some(), "POST /v1/users");
 
-        // /users/{id} should have PATCH and DELETE
-        let users_id_path = paths.get("/users/{id}").expect("/users/{{id}} path");
+        // /v1/users/{id} should have PATCH and DELETE
+        let users_id_path = paths.get("/v1/users/{id}").expect("/v1/users/{{id}} path");
         assert!(users_id_path.get("patch").is_some(), "PATCH /users/{{id}}");
         assert!(
             users_id_path.get("delete").is_some(),
@@ -843,7 +1010,7 @@ mod tests {
         let resources = vec![sample_resource()];
         let spec = generate(&config, &resources);
 
-        let list_op = &spec["paths"]["/users"]["get"];
+        let list_op = &spec["paths"]["/v1/users"]["get"];
         let params = list_op["parameters"].as_array().expect("params array");
 
         let param_names: Vec<&str> = params.iter().filter_map(|p| p["name"].as_str()).collect();
@@ -858,7 +1025,7 @@ mod tests {
         let resources = vec![sample_resource()];
         let spec = generate(&config, &resources);
 
-        let list_op = &spec["paths"]["/users"]["get"];
+        let list_op = &spec["paths"]["/v1/users"]["get"];
         let params = list_op["parameters"].as_array().expect("params array");
 
         let param_names: Vec<&str> = params.iter().filter_map(|p| p["name"].as_str()).collect();
@@ -872,7 +1039,7 @@ mod tests {
         let resources = vec![sample_resource()];
         let spec = generate(&config, &resources);
 
-        let list_op = &spec["paths"]["/users"]["get"];
+        let list_op = &spec["paths"]["/v1/users"]["get"];
         let params = list_op["parameters"].as_array().expect("params array");
 
         let param_names: Vec<&str> = params.iter().filter_map(|p| p["name"].as_str()).collect();
@@ -887,7 +1054,7 @@ mod tests {
         let spec = generate(&config, &resources);
 
         // Check create endpoint has 401, 403, 422, 429, 500
-        let create_op = &spec["paths"]["/users"]["post"];
+        let create_op = &spec["paths"]["/v1/users"]["post"];
         let responses = create_op["responses"].as_object().expect("responses");
 
         assert!(responses.contains_key("401"), "401 Unauthorized");
@@ -897,12 +1064,12 @@ mod tests {
         assert!(responses.contains_key("500"), "500 Internal server error");
 
         // Check get (list) has 401, 403, 429, 500 but NOT 404 (no :id)
-        let list_op = &spec["paths"]["/users"]["get"];
+        let list_op = &spec["paths"]["/v1/users"]["get"];
         let list_responses = list_op["responses"].as_object().expect("responses");
         assert!(!list_responses.contains_key("404"), "list has no 404");
 
         // Check update has 404 (has :id)
-        let update_op = &spec["paths"]["/users/{id}"]["patch"];
+        let update_op = &spec["paths"]["/v1/users/{id}"]["patch"];
         let update_responses = update_op["responses"].as_object().expect("responses");
         assert!(update_responses.contains_key("404"), "update has 404");
     }
@@ -913,10 +1080,10 @@ mod tests {
         let resources = vec![sample_resource()];
         let spec = generate(&config, &resources);
 
-        let create_op = &spec["paths"]["/users"]["post"];
+        let create_op = &spec["paths"]["/v1/users"]["post"];
         assert_eq!(
-            create_op["x-shaperail-hooks"],
-            serde_json::json!(["validate_org"])
+            create_op["x-shaperail-controller"],
+            serde_json::json!({"before": "validate_org"})
         );
         assert_eq!(
             create_op["x-shaperail-events"],
@@ -961,9 +1128,23 @@ mod tests {
         let resources = vec![sample_resource()];
         let spec = generate(&config, &resources);
 
-        let create_op = &spec["paths"]["/users"]["post"];
+        let create_op = &spec["paths"]["/v1/users"]["post"];
         let schema_ref = &create_op["requestBody"]["content"]["application/json"]["schema"]["$ref"];
         assert_eq!(schema_ref, "#/components/schemas/UsersCreateInput");
+    }
+
+    #[test]
+    fn upload_request_body_uses_multipart_form_data() {
+        let config = test_config();
+        let resources = vec![upload_resource()];
+        let spec = generate(&config, &resources);
+
+        let create_op = &spec["paths"]["/v1/assets"]["post"];
+        let schema = &create_op["requestBody"]["content"]["multipart/form-data"]["schema"];
+
+        assert_eq!(schema["properties"]["attachment"]["type"], "string");
+        assert_eq!(schema["properties"]["attachment"]["format"], "binary");
+        assert_eq!(schema["properties"]["title"]["type"], "string");
     }
 
     #[test]
@@ -972,7 +1153,7 @@ mod tests {
         let resources = vec![sample_resource()];
         let spec = generate(&config, &resources);
 
-        let list_op = &spec["paths"]["/users"]["get"];
+        let list_op = &spec["paths"]["/v1/users"]["get"];
         assert!(
             list_op["security"].is_array(),
             "auth endpoints have security"
@@ -1009,7 +1190,7 @@ mod tests {
         let resources = vec![sample_resource()];
         let spec = generate(&config, &resources);
 
-        let delete_op = &spec["paths"]["/users/{id}"]["delete"];
+        let delete_op = &spec["paths"]["/v1/users/{id}"]["delete"];
         let responses = delete_op["responses"].as_object().expect("responses");
         assert!(responses.contains_key("204"), "delete returns 204");
     }
@@ -1020,7 +1201,7 @@ mod tests {
         let resources = vec![sample_resource()];
         let spec = generate(&config, &resources);
 
-        let list_resp = &spec["paths"]["/users"]["get"]["responses"]["200"]["content"]
+        let list_resp = &spec["paths"]["/v1/users"]["get"]["responses"]["200"]["content"]
             ["application/json"]["schema"];
         assert!(list_resp["properties"]["data"]["type"] == "array");
         assert!(list_resp["properties"]["meta"]["type"] == "object");

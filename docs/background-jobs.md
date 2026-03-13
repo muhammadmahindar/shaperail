@@ -113,14 +113,22 @@ dead letter path.
 
 ## Monitoring
 
+Check the queue summary:
+
+```bash
+shaperail jobs:status
+```
+
 Check the status of a specific job:
 
 ```bash
 shaperail jobs:status <job_id>
 ```
 
-This reads the metadata hash at `shaperail:jobs:meta:{job_id}` and prints the
-current status, attempt count, and last error if any.
+Without a job ID, the command prints queue depth by priority, the dead letter
+count, and recent failures. With a job ID, it reads the metadata hash at
+`shaperail:jobs:meta:{job_id}` and prints the current status, attempt count,
+timestamps, and last error if any.
 
 ## Redis key reference
 

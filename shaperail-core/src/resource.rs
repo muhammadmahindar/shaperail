@@ -108,7 +108,7 @@ mod tests {
                     ttl: 60,
                     invalidate_on: None,
                 }),
-                hooks: None,
+                controller: None,
                 events: None,
                 jobs: None,
                 upload: None,

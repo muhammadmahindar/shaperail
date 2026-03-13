@@ -3,7 +3,7 @@ members = ["shaperail-core", "shaperail-codegen", "shaperail-runtime", "shaperai
 resolver = "2"
 
 [workspace.package]
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -17,10 +17,12 @@ categories = ["web-programming::http-server", "development-tools"]
 [workspace.dependencies]
 # Async
 tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
 
 # HTTP — PRD spec: Actix-web 4
 actix-web = "4"
 actix-ws = "0.4"
+actix-multipart = "0.7"
 
 # Serde
 serde = { version = "1", features = ["derive"] }

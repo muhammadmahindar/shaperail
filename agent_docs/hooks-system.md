@@ -1,24 +1,77 @@
-# Shaperail Hook System
+# Shaperail Controller System
 
-## What Hooks Are
-Hooks are escape hatches for custom business logic that can't be expressed declaratively.
-They are Rust async functions with a fixed signature, injected at declared lifecycle points.
+## What Controllers Are
+Controllers are the escape hatch for custom business logic that cannot be
+expressed declaratively in the resource YAML. They replace the previous hook
+system with a clearer before/after model tied to each endpoint.
 
-## Hook Signature (always this shape)
+A controller is a pair of optional Rust async functions (`before` and `after`)
+declared on an endpoint via the `controller:` field.
+
+## YAML Syntax
+```yaml
+endpoints:
+  create:
+    method: POST
+    path: /users
+    auth: [admin]
+    input: [email, name, role, org_id]
+    controller: { before: validate_org }          # before only
+    events: [user.created]
+
+  update:
+    method: PATCH
+    path: /users/:id
+    auth: [admin, owner]
+    input: [name, role]
+    controller: { before: check_permissions, after: log_update }  # both
+
+  delete:
+    method: DELETE
+    path: /users/:id
+    auth: [admin]
+    controller: { after: cleanup_related }        # after only
+```
+
+Valid shapes:
+```yaml
+controller: { before: fn_name }
+controller: { after: fn_name }
+controller: { before: fn_before, after: fn_after }
+```
+
+Only one `before` and one `after` function per endpoint. If you need to compose
+multiple steps, call them from within your single controller function.
+
+## File Location
+Controller implementations live alongside resource YAML files:
+
+```
+resources/
+  users.yaml
+  users.controller.rs        # controller fns for users resource
+  orders.yaml
+  orders.controller.rs       # controller fns for orders resource
+```
+
+The file MUST be named `<resource>.controller.rs` where `<resource>` matches the
+`resource:` value in the YAML (e.g. `users`).
+
+## Function Signature (always this shape)
 ```rust
-pub async fn hook_name(ctx: &mut HookContext) -> Result<(), ShaperailError> {
+pub async fn fn_name(ctx: &mut ControllerContext) -> Result<(), ShaperailError> {
     // your logic here
     Ok(())
 }
 ```
 
-## HookContext — Everything Available on `ctx`
+## ControllerContext — Everything Available on `ctx`
 ```rust
-pub struct HookContext {
-    // Input data (before-hooks: mutable, after-hooks: read-only)
+pub struct ControllerContext {
+    // Input data (before: mutable, after: read-only)
     pub input: Value,              // JSON of the request body
     pub resource: Option<Value>,   // current DB record (for update/delete)
-    pub output: Option<Value>,     // response data (after-hooks only)
+    pub output: Option<Value>,     // response data (after only)
 
     // Auth
     pub user: Option<AuthUser>,    // authenticated user (None if public endpoint)
@@ -36,11 +89,31 @@ pub struct HookContext {
 }
 ```
 
-## Using ctx — Common Patterns
+## Before / After Semantics
 
-### Validate input
+### Before controller
+- Runs **before** the DB write.
+- `ctx.input` is mutable — you can validate, transform, or reject the request.
+- `ctx.output` is `None` (the write has not happened yet).
+- Returning `Err` aborts the DB write and returns the error to the client.
+
+### After controller
+- Runs **after** the DB write.
+- `ctx.output` contains the response data.
+- `ctx.input` is read-only at this point.
+- Returning `Err` is logged but the response is still 200 (configurable).
+
+## Execution Order
+1. `before` controller function runs (if declared)
+2. DB write executes
+3. `after` controller function runs (if declared)
+4. Response returned to client
+
+## Common Patterns
+
+### Validate input (before)
 ```rust
-pub async fn validate_org_membership(ctx: &mut HookContext) -> Result<(), ShaperailError> {
+pub async fn validate_org(ctx: &mut ControllerContext) -> Result<(), ShaperailError> {
     let org_id: Uuid = serde_json::from_value(ctx.input["org_id"].clone())?;
     let user = ctx.user.as_ref().ok_or(ShaperailError::Unauthorized)?;
 
@@ -51,9 +124,9 @@ pub async fn validate_org_membership(ctx: &mut HookContext) -> Result<(), Shaper
 }
 ```
 
-### Mutate input (before-hooks only)
+### Mutate input (before)
 ```rust
-pub async fn hash_password(ctx: &mut HookContext) -> Result<(), ShaperailError> {
+pub async fn hash_password(ctx: &mut ControllerContext) -> Result<(), ShaperailError> {
     if let Some(password) = ctx.input.get("password").and_then(|v| v.as_str()) {
         let hash = bcrypt::hash(password, 12)?;
         ctx.input["password_hash"] = Value::String(hash);
@@ -63,9 +136,9 @@ pub async fn hash_password(ctx: &mut HookContext) -> Result<(), ShaperailError> 
 }
 ```
 
-### Enqueue a job (after-hooks)
+### Enqueue a job (after)
 ```rust
-pub async fn send_welcome_email(ctx: &mut HookContext) -> Result<(), ShaperailError> {
+pub async fn send_welcome_email(ctx: &mut ControllerContext) -> Result<(), ShaperailError> {
     let user_id = ctx.output.as_ref()
         .and_then(|o| o["id"].as_str())
         .ok_or(ShaperailError::Internal("Missing user id in output".into()))?;
@@ -75,30 +148,16 @@ pub async fn send_welcome_email(ctx: &mut HookContext) -> Result<(), ShaperailEr
 }
 ```
 
-### Emit a custom event
+### Emit a custom event (after)
 ```rust
-pub async fn emit_user_created_event(ctx: &mut HookContext) -> Result<(), ShaperailError> {
+pub async fn emit_user_created(ctx: &mut ControllerContext) -> Result<(), ShaperailError> {
     ctx.events.emit("user.onboarded", ctx.output.clone().unwrap_or_default()).await?;
     Ok(())
 }
 ```
 
-## Hook Execution Order
-1. `before` hooks run in declaration order, before DB write
-2. DB write executes
-3. `after` hooks run in declaration order, after DB write
-4. Response returned to client
-
-If any `before` hook returns `Err`, the DB write is aborted and the error is returned.
-If any `after` hook returns `Err`, the error is logged but the response is still 200 (configurable).
-
-## Hook File Location
-Custom hook implementations live in `shaperail-runtime/src/hooks/<resource>/`.
-They are referenced by name in the resource YAML file.
-The codegen generates the hook registration; you write the implementation.
-
-## What NOT to Do in Hooks
-- Do NOT make direct HTTP calls (use the job queue instead — hooks must not block)
+## What NOT to Do in Controllers
+- Do NOT make direct HTTP calls (use the job queue instead — controllers must not block)
 - Do NOT catch and swallow errors silently
-- Do NOT spawn new Tokio tasks (use ctx.jobs for background work)
-- Do NOT mutate ctx.output in before-hooks (it doesn't exist yet)
+- Do NOT spawn new Tokio tasks (use `ctx.jobs` for background work)
+- Do NOT read `ctx.output` in a `before` function (it does not exist yet)

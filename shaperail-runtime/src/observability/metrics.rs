@@ -6,6 +6,8 @@ use prometheus::{
 };
 use shaperail_core::ShaperailError;
 
+use crate::handlers::crud::AppState;
+
 /// Shared metrics state holding all Prometheus metric collectors.
 #[derive(Clone)]
 pub struct MetricsState {
@@ -124,7 +126,22 @@ impl MetricsState {
 /// `GET /metrics` — returns Prometheus text format metrics.
 pub async fn metrics_handler(
     metrics: web::Data<MetricsState>,
+    state: Option<web::Data<Arc<AppState>>>,
 ) -> Result<HttpResponse, ShaperailError> {
+    if let Some(state) = state {
+        metrics.set_db_pool_size(state.pool.size() as i64);
+
+        if let Some(job_queue) = &state.job_queue {
+            match job_queue.total_depth().await {
+                Ok(depth) => metrics.set_job_queue_depth(depth),
+                Err(e) => {
+                    metrics.record_error("job_queue_depth");
+                    tracing::warn!(error = %e, "Failed to update job queue depth metric");
+                }
+            }
+        }
+    }
+
     let encoder = TextEncoder::new();
     let metric_families = metrics.registry.gather();
     let mut buffer = Vec::new();

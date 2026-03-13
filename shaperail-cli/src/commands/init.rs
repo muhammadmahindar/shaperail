@@ -51,7 +51,7 @@ fn scaffold(project_name: &str, root: &Path) -> Result<(), String> {
         "",
         "resources",
         "migrations",
-        "hooks",
+        "controllers",
         "seeds",
         "tests",
         "channels",
@@ -103,6 +103,7 @@ name = "{project_name}"
 version = "0.1.0"
 edition = "2021"
 rust-version = "{RUST_TOOLCHAIN_VERSION}"
+build = "build.rs"
 
 [dependencies]
 shaperail-runtime = {shaperail_runtime_dep}
@@ -110,11 +111,19 @@ shaperail-core = {shaperail_core_dep}
 shaperail-codegen = {shaperail_codegen_dep}
 actix-web = "4"
 tokio = {{ version = "1", features = ["full"] }}
-sqlx = {{ version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "chrono", "json", "migrate"] }}
+sqlx = {{ version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "chrono", "json", "migrate", "macros"] }}
+serde = {{ version = "1", features = ["derive"] }}
 serde_json = "1"
+uuid = {{ version = "1", features = ["v4", "serde"] }}
+chrono = {{ version = "0.4", features = ["serde"] }}
 tracing = "0.1"
 tracing-subscriber = {{ version = "0.3", features = ["env-filter"] }}
 dotenvy = "0.15"
+
+[build-dependencies]
+dotenvy = "0.15"
+sqlx = {{ version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "migrate"] }}
+tokio = {{ version = "1", features = ["rt-multi-thread"] }}
 "#,
         shaperail_runtime_dep = shaperail_dependency("shaperail-runtime"),
         shaperail_core_dep = shaperail_dependency("shaperail-core"),
@@ -128,13 +137,16 @@ use std::path::Path;
 use std::sync::Arc;
 
 use actix_web::{web, App, HttpResponse, HttpServer};
+#[path = "../generated/mod.rs"]
+mod generated;
 use shaperail_runtime::auth::jwt::JwtConfig;
 use shaperail_runtime::cache::{create_redis_pool, RedisCache};
 use shaperail_runtime::events::EventEmitter;
 use shaperail_runtime::handlers::{register_all_resources, AppState};
 use shaperail_runtime::jobs::JobQueue;
 use shaperail_runtime::observability::{
-    health_handler, health_ready_handler, metrics_handler, HealthState, MetricsState,
+    health_handler, health_ready_handler, metrics_handler, sensitive_fields, HealthState,
+    MetricsState, RequestLogger,
 };
 
 fn io_error(message: impl Into<String>) -> io::Error {
@@ -969,18 +981,22 @@ async fn main() -> std::io::Result<()> {
         .and_then(|p| p.parse().ok())
         .unwrap_or(config.port);
 
+    let metrics_state = web::Data::new(
+        MetricsState::new().map_err(|e| io_error(format!("Failed to initialize metrics: {e}")))?,
+    );
+    let stores = generated::build_store_registry(pool.clone());
     let state = Arc::new(AppState {
         pool: pool.clone(),
         resources: resources.clone(),
+        stores: Some(stores),
+        controllers: None,
         jwt_config: jwt_config.clone(),
         cache,
         event_emitter,
         job_queue,
+        metrics: Some(metrics_state.get_ref().clone()),
     });
     let health_state = web::Data::new(HealthState::new(Some(pool), redis_pool));
-    let metrics_state = web::Data::new(
-        MetricsState::new().map_err(|e| io_error(format!("Failed to initialize metrics: {e}")))?,
-    );
 
     tracing::info!("Starting Shaperail server on port {port}");
     tracing::info!("OpenAPI spec available at http://localhost:{port}/openapi.json");
@@ -997,7 +1013,9 @@ async fn main() -> std::io::Result<()> {
         let st = state_clone.clone();
         let res = resources_clone.clone();
         let spec = openapi_json_clone.clone();
+        let sensitive = sensitive_fields(&res);
         let mut app = App::new()
+            .wrap(RequestLogger::new(sensitive))
             .app_data(web::Data::new(st.clone()))
             .app_data(web::Data::new(spec))
             .app_data(health_state_clone.clone())
@@ -1018,6 +1036,71 @@ async fn main() -> std::io::Result<()> {
 }
 "###;
     write_file(&root.join("src/main.rs"), main_rs)?;
+
+    let build_rs = r###"use std::env;
+use std::io;
+use std::path::Path;
+
+fn main() {
+    if let Err(error) = run() {
+        panic!("{error}");
+    }
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
+    println!("cargo:rerun-if-changed=.env");
+    println!("cargo:rerun-if-changed=migrations");
+
+    let database_url = database_url_from_env_or_dotenv()?;
+    let Some(database_url) = database_url else {
+        return Ok(());
+    };
+
+    println!("cargo:rustc-env=DATABASE_URL={database_url}");
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+
+    runtime.block_on(async move {
+        let migrator = sqlx::migrate::Migrator::new(Path::new("./migrations")).await?;
+        let pool = sqlx::PgPool::connect(&database_url).await.map_err(|error| {
+            io::Error::other(format!(
+                "Failed to connect to DATABASE_URL during build-time SQL verification: {error}. Run `docker compose up -d` before building."
+            ))
+        })?;
+        migrator.run(&pool).await.map_err(|error| {
+            io::Error::other(format!(
+                "Failed to apply migrations during build-time SQL verification: {error}"
+            ))
+        })?;
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })?;
+
+    Ok(())
+}
+
+fn database_url_from_env_or_dotenv() -> Result<Option<String>, Box<dyn std::error::Error>> {
+    if let Ok(database_url) = env::var("DATABASE_URL") {
+        return Ok(Some(database_url));
+    }
+
+    let iter = match dotenvy::from_path_iter(".env") {
+        Ok(iter) => iter,
+        Err(_) => return Ok(None),
+    };
+
+    for entry in iter {
+        let (key, value) = entry?;
+        if key == "DATABASE_URL" {
+            return Ok(Some(value));
+        }
+    }
+
+    Ok(None)
+}
+"###;
+    write_file(&root.join("build.rs"), build_rs)?;
 
     // Example resource file
     let example_resource = r#"resource: posts
@@ -1164,6 +1247,9 @@ volumes:
         db_name = project_name.replace('-', "_")
     );
     write_file(&root.join("docker-compose.yml"), &docker_compose)?;
+
+    let resources = super::load_all_resources_from(&root.join("resources"))?;
+    super::generate::write_generated_modules(&resources, &root.join("generated"))?;
 
     Ok(())
 }

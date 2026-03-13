@@ -8,6 +8,26 @@ The `shaperail` binary is the operational interface to the framework. Most
 projects follow the same loop: scaffold, edit resources, validate, migrate,
 serve, then package.
 
+## All commands
+
+| Command | Description |
+| --- | --- |
+| `shaperail init <name>` | Scaffold a new project (resources, migrations, config, Docker Compose, .env). |
+| `shaperail generate` | Run codegen for all resource files; write generated Rust and artifacts to `generated/`. |
+| `shaperail serve [--port PORT] [--check]` | Start the dev server (with hot reload via cargo-watch). Use `--check` to validate without starting. |
+| `shaperail build [--docker]` | Build release binary. With `--docker`, build a scratch-based Docker image. |
+| `shaperail validate [path]` | Validate resource file(s). Default path: `resources`. |
+| `shaperail test [-- args...]` | Run generated and custom tests (`cargo test` with optional args). |
+| `shaperail migrate [--rollback]` | Generate and apply SQL migrations from resource diff. `--rollback` reverts the last batch. |
+| `shaperail seed [path]` | Load fixture YAML from `seeds/` (or given path) into the database. Default path: `seeds`. |
+| `shaperail export openapi [--output FILE]` | Emit OpenAPI 3.1 spec to stdout or to a file. |
+| `shaperail export sdk --lang <lang> [--output DIR]` | Generate client SDK (e.g. `--lang ts` for TypeScript). |
+| `shaperail doctor` | Check system deps: Rust, PostgreSQL, Redis, sqlx-cli; print fix instructions. |
+| `shaperail routes` | Print all routes with auth requirements. |
+| `shaperail jobs:status [job_id]` | Show job queue depth and recent failures; or inspect a specific job by ID. |
+
+Every command supports `--help`.
+
 ## Core command loop
 
 | Command | When to use it | What it changes |
@@ -19,7 +39,7 @@ serve, then package.
 | `shaperail export openapi --output openapi.json` | Review or publish the contract | Writes the deterministic OpenAPI 3.1 spec |
 | `shaperail migrate` | Schema changed | Creates a new SQL migration based on current resource definitions |
 | `shaperail seed` | Populate dev data | Loads YAML fixtures from `seeds/` into the database in a transaction |
-| `shaperail jobs:status` | Check background work | Shows Redis queue depths and dead letter count |
+| `shaperail jobs:status [job_id]` | Check background work | Shows queue summary by default or inspects a specific job |
 | `shaperail serve` | Run locally | Applies existing migrations and starts the development server |
 | `shaperail serve --check` | Smoke test a scaffolded app | Verifies the generated app compiles and the config is coherent |
 | `shaperail build --docker` | Package a deployable image | Builds the user app as a scratch-based Docker image |
@@ -115,10 +135,13 @@ shaperail export openapi --output openapi.json
 
 ```bash
 shaperail jobs:status
+shaperail jobs:status <job_id>
 ```
 
 Connects to Redis and displays the current queue depth for each priority level
-(critical, high, normal, low) and the dead letter queue count.
+(critical, high, normal, low), the dead letter queue count, and recent
+failures. If you pass a job ID, it prints the stored metadata for that job
+instead of the summary view.
 
 ## Practical notes
 

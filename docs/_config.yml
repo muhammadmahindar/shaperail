@@ -20,4 +20,4 @@ aux_links:
   GitHub: https://github.com/shaperail/shaperail
   crates.io: https://crates.io/crates/shaperail-cli
   Releases: https://github.com/shaperail/shaperail/releases
-footer_content: "Shaperail documentation lives in the same repository as the framework so every release has versioned instructions."
+footer_content: "Shaperail documentation lives in the same repository as the framework so every release has versioned instructions. Documentation for v{{ site.release_version }}."

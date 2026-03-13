@@ -1,4 +1,4 @@
-use shaperail_core::{FieldType, ResourceDefinition};
+use shaperail_core::{FieldType, HttpMethod, ResourceDefinition};
 
 /// A semantic validation error for a resource definition.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,12 +106,18 @@ pub fn validate_resource(rd: &ResourceDefinition) -> Vec<ValidationError> {
     // Endpoint validation
     if let Some(endpoints) = &rd.endpoints {
         for (action, ep) in endpoints {
-            // Hooks must be non-empty strings
-            if let Some(hooks) = &ep.hooks {
-                for hook in hooks {
-                    if hook.is_empty() {
+            if let Some(controller) = &ep.controller {
+                if let Some(before) = &controller.before {
+                    if before.is_empty() {
                         errors.push(err(&format!(
-                            "resource '{res}': endpoint '{action}' has an empty hook name"
+                            "resource '{res}': endpoint '{action}' has an empty controller.before name"
+                        )));
+                    }
+                }
+                if let Some(after) = &controller.after {
+                    if after.is_empty() {
+                        errors.push(err(&format!(
+                            "resource '{res}': endpoint '{action}' has an empty controller.after name"
                         )));
                     }
                 }
@@ -188,10 +194,63 @@ pub fn validate_resource(rd: &ResourceDefinition) -> Vec<ValidationError> {
                 )));
             }
 
-            if ep.upload.is_some() {
-                errors.push(err(&format!(
-                    "resource '{res}': endpoint '{action}' uses upload, but upload endpoints are not yet supported by the runtime"
-                )));
+            if let Some(upload) = &ep.upload {
+                match ep.method {
+                    HttpMethod::Post | HttpMethod::Patch | HttpMethod::Put => {}
+                    _ => errors.push(err(&format!(
+                        "resource '{res}': endpoint '{action}' uses upload but method must be POST, PATCH, or PUT"
+                    ))),
+                }
+
+                match rd.schema.get(&upload.field) {
+                    Some(field) if field.field_type == FieldType::File => {}
+                    Some(_) => errors.push(err(&format!(
+                        "resource '{res}': endpoint '{action}' upload field '{}' must be type file",
+                        upload.field
+                    ))),
+                    None => errors.push(err(&format!(
+                        "resource '{res}': endpoint '{action}' upload field '{}' not found in schema",
+                        upload.field
+                    ))),
+                }
+
+                if !matches!(upload.storage.as_str(), "local" | "s3" | "gcs" | "azure") {
+                    errors.push(err(&format!(
+                        "resource '{res}': endpoint '{action}' upload storage '{}' is invalid",
+                        upload.storage
+                    )));
+                }
+
+                if !ep
+                    .input
+                    .as_ref()
+                    .is_some_and(|fields| fields.iter().any(|field| field == &upload.field))
+                {
+                    errors.push(err(&format!(
+                        "resource '{res}': endpoint '{action}' upload field '{}' must appear in input",
+                        upload.field
+                    )));
+                }
+
+                for (suffix, expected_types) in [
+                    ("filename", &[FieldType::String][..]),
+                    ("mime_type", &[FieldType::String][..]),
+                    ("size", &[FieldType::Integer, FieldType::Bigint][..]),
+                ] {
+                    let companion = format!("{}_{}", upload.field, suffix);
+                    if let Some(field) = rd.schema.get(&companion) {
+                        if !expected_types.contains(&field.field_type) {
+                            let expected = expected_types
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(" or ");
+                            errors.push(err(&format!(
+                                "resource '{res}': companion upload field '{companion}' must be type {expected}"
+                            )));
+                        }
+                    }
+                }
             }
         }
     }
@@ -436,18 +495,48 @@ schema:
     }
 
     #[test]
-    fn upload_endpoint_not_supported() {
+    fn upload_endpoint_valid_when_file_field_declared() {
+        let yaml = r#"
+resource: assets
+version: 1
+schema:
+  id: { type: uuid, primary: true, generated: true }
+  file: { type: file, required: true }
+  file_filename: { type: string }
+  file_mime_type: { type: string }
+  file_size: { type: bigint }
+  updated_at: { type: timestamp, generated: true }
+endpoints:
+  upload:
+    method: POST
+    path: /assets/upload
+    input: [file]
+    upload:
+      field: file
+      storage: local
+      max_size: 5mb
+"#;
+        let rd = parse_resource(yaml).unwrap();
+        let errors = validate_resource(&rd);
+        assert!(
+            errors.is_empty(),
+            "Expected valid upload resource, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn upload_endpoint_requires_file_field() {
         let yaml = r#"
 resource: assets
 version: 1
 schema:
   id: { type: uuid, primary: true, generated: true }
   file_path: { type: string, required: true }
-  updated_at: { type: timestamp, generated: true }
 endpoints:
   upload:
     method: POST
     path: /assets/upload
+    input: [file_path]
     upload:
       field: file_path
       storage: local
@@ -455,8 +544,8 @@ endpoints:
 "#;
         let rd = parse_resource(yaml).unwrap();
         let errors = validate_resource(&rd);
-        assert!(errors
-            .iter()
-            .any(|e| e.message.contains("upload endpoints are not yet supported")));
+        assert!(errors.iter().any(|e| e
+            .message
+            .contains("upload field 'file_path' must be type file")));
     }
 }

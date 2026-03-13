@@ -20,7 +20,9 @@ pub use config::{
     AuthConfig, CacheConfig, DatabaseConfig, EventSubscriber, EventTarget, EventsConfig,
     InboundWebhookConfig, LoggingConfig, ProjectConfig, StorageConfig, WebhookConfig, WorkerCount,
 };
-pub use endpoint::{AuthRule, CacheSpec, EndpointSpec, HttpMethod, PaginationStyle, UploadSpec};
+pub use endpoint::{
+    AuthRule, CacheSpec, ControllerSpec, EndpointSpec, HttpMethod, PaginationStyle, UploadSpec,
+};
 pub use error::{FieldError, ShaperailError};
 pub use field_type::FieldType;
 pub use relation::{IndexSpec, RelationSpec, RelationType};

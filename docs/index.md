@@ -3,11 +3,15 @@ title: Shaperail Documentation
 nav_order: 1
 ---
 
-Shaperail is a framework for teams that want a small source of truth,
-predictable generation, and a runtime that behaves exactly like the schema says
-it should.
+# Shaperail
 
-## The shortest correct path
+**An AI-native Rust backend framework.** Define resources in YAML; get a production-ready REST API with auth, caching, jobs, WebSockets, and OpenAPI — with one canonical schema as the source of truth.
+
+*Documentation for v{{ site.release_version }}.*
+
+---
+
+## Quick start
 
 ```bash
 cargo install shaperail-cli
@@ -17,42 +21,89 @@ docker compose up -d
 shaperail serve
 ```
 
-Open the generated app:
+Your app is available at:
 
-- `http://localhost:3000/docs`
-- `http://localhost:3000/openapi.json`
-- `http://localhost:3000/health`
-
-## What Shaperail is optimized for
-
-- Explicit resource definitions with no hidden route generation
-- Flat abstractions where the resource file maps directly to runtime behavior
-- Deterministic OpenAPI output and route registration
-- Docker-first local development with Postgres and Redis already wired
-- Generated apps that expose docs, health checks, and observability from day one
-
-## What you actually author
-
-These are the files a Shaperail user edits in day-to-day work:
-
-| File | Why it matters |
+| URL | Purpose |
 | --- | --- |
-| `resources/*.yaml` | Defines schema, endpoints, auth rules, relations, filters, pagination, and indexes |
-| `migrations/*.sql` | Stores the SQL that changes the running database |
-| `shaperail.config.yaml` | Holds service-level settings such as port, DB, cache, and auth config |
-| `.env` | Connects the app to local or deployed services |
-| `docker-compose.yml` | Boots Postgres and Redis for development |
+| `http://localhost:3000/docs` | Interactive API docs |
+| `http://localhost:3000/openapi.json` | OpenAPI 3.1 spec |
+| `http://localhost:3000/health` | Liveness check |
+| `http://localhost:3000/health/ready` | Readiness (DB + Redis) |
+| `http://localhost:3000/metrics` | Prometheus metrics |
 
-## Start here
+---
 
-1. Follow [Getting started]({{ '/getting-started/' | relative_url }}) until you have a running app.
-2. Read [Resource guide]({{ '/resource-guide/' | relative_url }}) to learn the schema contract.
-3. Review [CLI reference]({{ '/cli-reference/' | relative_url }}) for the day-to-day command set.
-4. Use the [Blog API example]({{ '/blog-api-example/' | relative_url }}) as a complete sample app.
+## Why Shaperail
+
+| Principle | What it means |
+| --- | --- |
+| **One source of truth** | Resource YAML drives schema, routes, validation, migrations, and OpenAPI. No hidden conventions. |
+| **Explicit over implicit** | No routes or behavior unless you declare it in the resource file. |
+| **Flat abstraction** | Resource definition maps directly to runtime; no deep framework layers. |
+| **Deterministic output** | Same resource files produce the same OpenAPI spec and code every time. |
+| **Docker-first dev** | `docker compose up -d` gives you Postgres and Redis; no manual DB setup. |
+
+The framework is built so that docs, codegen, and runtime stay in sync — and so that LLMs can generate valid Shaperail resources and commands with minimal mistakes.
+
+---
+
+## When to use Shaperail
+
+| Good fit | Less ideal |
+| --- | --- |
+| REST APIs with clear resources, auth, and optional real-time or background work | Apps that need heavy custom routing or non-REST protocols only |
+| Teams that want schema-first development and deterministic codegen | Teams that prefer hand-written controllers and ORM models |
+| Docker-based local dev with Postgres and Redis | Environments where you cannot run Docker or Redis |
+| Projects where a single YAML resource file should drive routes, DB, and OpenAPI | Prototypes that change shape every day with no schema discipline |
+
+If you need a single source of truth for your API contract and like explicit declarations over magic, Shaperail is a strong fit.
+
+---
+
+## What you author
+
+You edit these files; the framework generates the rest.
+
+| File | Role |
+| --- | --- |
+| `resources/*.yaml` | Schema, endpoints, auth, relations, filters, pagination, cache, indexes |
+| `migrations/*.sql` | SQL that evolves the database (generated from resource diff) |
+| `shaperail.config.yaml` | Port, database, cache, auth, storage, logging, event subscribers |
+| `.env` | `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, etc. |
+| `docker-compose.yml` | Postgres and Redis for local development |
+
+Generated Rust, OpenAPI, and routes live in `generated/` and are not hand-edited.
+
+---
+
+## Features at a glance
+
+- **REST API** — List, get, create, update, delete, bulk create/delete; cursor or offset pagination; filters, sort, full-text search; field selection and relation loading (`?include=…`).
+- **Auth** — JWT (Bearer) and API keys (`X-API-Key`); role-based and owner-based rules; rate limiting via Redis.
+- **Caching** — Redis-backed cache per GET endpoint with TTL and configurable invalidation.
+- **Background jobs** — Priority queues, retries, dead letter queue, job status; enqueue from hooks.
+- **WebSockets** — Channel YAML, JWT on upgrade, room subscriptions, Redis pub/sub for multi-instance broadcast.
+- **File storage** — Local, S3, GCS, Azure; upload validation, signed URLs, image processing.
+- **Events & webhooks** — Auto-emitted resource events; subscribers (job, webhook, channel, hook); outbound HMAC-signed webhooks; inbound webhook endpoints.
+- **Observability** — Structured JSON logs, request_id, PII redaction; Prometheus metrics; OpenTelemetry; `/health` and `/health/ready`.
+- **OpenAPI & SDK** — Deterministic OpenAPI 3.1; TypeScript SDK generation.
+
+---
 
 ## Documentation map
 
-- [Getting started]({{ '/getting-started/' | relative_url }})
-- [Guides]({{ '/guides/' | relative_url }})
-- [Reference]({{ '/reference/' | relative_url }})
-- [Examples]({{ '/examples/' | relative_url }})
+### Get going
+
+- [**Getting started**]({{ '/getting-started/' | relative_url }}) — Install CLI, scaffold a project, run the app, first schema change.
+
+### Guides
+
+- [**Guides**]({{ '/guides/' | relative_url }}) — Auth, migrations, Docker, caching, jobs, WebSockets, file storage, events, observability.
+
+### Reference
+
+- [**Reference**]({{ '/reference/' | relative_url }}) — Resource format, configuration, CLI, API responses and query parameters.
+
+### Examples
+
+- [**Examples**]({{ '/examples/' | relative_url }}) — [Blog API example]({{ '/blog-api-example/' | relative_url }}) — full sample with posts, comments, relations, and migrations.

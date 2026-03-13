@@ -150,7 +150,7 @@ endpoints:
 | `hooks` | Hook functions to run before/after the operation |
 | `events` | Events to emit on success (e.g., `[user.created]`) |
 | `jobs` | Background jobs to enqueue on success (e.g., `[send_welcome_email]`) |
-| `upload` | File upload config: `{ field: avatar, storage: s3, max_size: 5mb }` |
+| `upload` | Multipart file upload config: `{ field: avatar, storage: s3, max_size: 5mb }` |
 | `soft_delete` | When `true`, sets `deleted_at` instead of removing the row |
 
 Important behavior:
@@ -163,6 +163,8 @@ Important behavior:
   inferred globally.
 - Every create/update/delete automatically emits an event (`resource.action`)
   regardless of the `events` list.
+- Upload endpoints read `multipart/form-data`. The declared `upload.field` must
+  also appear in `input`.
 
 ## Relations
 

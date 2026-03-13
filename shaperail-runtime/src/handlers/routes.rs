@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use actix_multipart::Multipart;
 use actix_web::web;
 use shaperail_core::{HttpMethod, ResourceDefinition};
 
@@ -22,8 +23,12 @@ pub fn register_resource(
             let ep_arc = Arc::new(endpoint.clone());
             let res = resource_arc.clone();
 
-            // Convert PRD path (/users/:id) to Actix path (/users/{id})
-            let actix_path = endpoint.path.replace(":id", "{id}");
+            // Convert PRD path (/users/:id) to Actix path (/v1/users/{id})
+            let actix_path = format!(
+                "/v{}{}",
+                resource.version,
+                endpoint.path.replace(":id", "{id}")
+            );
 
             match action.as_str() {
                 "list" => {
@@ -55,35 +60,64 @@ pub fn register_resource(
                 "create" => {
                     let ep = ep_arc.clone();
                     let r = res.clone();
-                    cfg.route(
-                        &actix_path,
-                        web::post().to(
-                            move |req,
-                                  state: web::Data<Arc<AppState>>,
-                                  body: web::Json<serde_json::Value>| {
-                                let ep = web::Data::new(ep.clone());
-                                let r = web::Data::new(r.clone());
-                                crud::handle_create(req, state, r, ep, body)
-                            },
-                        ),
-                    );
+                    if endpoint.upload.is_some() {
+                        cfg.route(
+                            &actix_path,
+                            web::post().to(
+                                move |req, state: web::Data<Arc<AppState>>, payload: Multipart| {
+                                    let ep = web::Data::new(ep.clone());
+                                    let r = web::Data::new(r.clone());
+                                    crud::handle_create_upload(req, state, r, ep, payload)
+                                },
+                            ),
+                        );
+                    } else {
+                        cfg.route(
+                            &actix_path,
+                            web::post().to(
+                                move |req,
+                                      state: web::Data<Arc<AppState>>,
+                                      body: web::Json<serde_json::Value>| {
+                                    let ep = web::Data::new(ep.clone());
+                                    let r = web::Data::new(r.clone());
+                                    crud::handle_create(req, state, r, ep, body)
+                                },
+                            ),
+                        );
+                    }
                 }
                 "update" => {
                     let ep = ep_arc.clone();
                     let r = res.clone();
-                    cfg.route(
-                        &actix_path,
-                        web::patch().to(
-                            move |req,
-                                  state: web::Data<Arc<AppState>>,
-                                  path: web::Path<String>,
-                                  body: web::Json<serde_json::Value>| {
-                                let ep = web::Data::new(ep.clone());
-                                let r = web::Data::new(r.clone());
-                                crud::handle_update(req, state, r, ep, path, body)
-                            },
-                        ),
-                    );
+                    if endpoint.upload.is_some() {
+                        cfg.route(
+                            &actix_path,
+                            web::patch().to(
+                                move |req,
+                                      state: web::Data<Arc<AppState>>,
+                                      path: web::Path<String>,
+                                      payload: Multipart| {
+                                    let ep = web::Data::new(ep.clone());
+                                    let r = web::Data::new(r.clone());
+                                    crud::handle_update_upload(req, state, r, ep, path, payload)
+                                },
+                            ),
+                        );
+                    } else {
+                        cfg.route(
+                            &actix_path,
+                            web::patch().to(
+                                move |req,
+                                      state: web::Data<Arc<AppState>>,
+                                      path: web::Path<String>,
+                                      body: web::Json<serde_json::Value>| {
+                                    let ep = web::Data::new(ep.clone());
+                                    let r = web::Data::new(r.clone());
+                                    crud::handle_update(req, state, r, ep, path, body)
+                                },
+                            ),
+                        );
+                    }
                 }
                 "delete" => {
                     let ep = ep_arc.clone();
@@ -165,39 +199,74 @@ pub fn register_resource(
                         HttpMethod::Post => {
                             let ep = ep_arc.clone();
                             let r = res.clone();
-                            cfg.route(
-                                &actix_path,
-                                web::post().to(
-                                    move |req,
-                                          state: web::Data<Arc<AppState>>,
-                                          body: web::Json<serde_json::Value>| {
-                                        let ep = web::Data::new(ep.clone());
-                                        let r = web::Data::new(r.clone());
-                                        crud::handle_create(req, state, r, ep, body)
-                                    },
-                                ),
-                            );
+                            if endpoint.upload.is_some() {
+                                cfg.route(
+                                    &actix_path,
+                                    web::post().to(
+                                        move |req,
+                                              state: web::Data<Arc<AppState>>,
+                                              payload: Multipart| {
+                                            let ep = web::Data::new(ep.clone());
+                                            let r = web::Data::new(r.clone());
+                                            crud::handle_create_upload(req, state, r, ep, payload)
+                                        },
+                                    ),
+                                );
+                            } else {
+                                cfg.route(
+                                    &actix_path,
+                                    web::post().to(
+                                        move |req,
+                                              state: web::Data<Arc<AppState>>,
+                                              body: web::Json<serde_json::Value>| {
+                                            let ep = web::Data::new(ep.clone());
+                                            let r = web::Data::new(r.clone());
+                                            crud::handle_create(req, state, r, ep, body)
+                                        },
+                                    ),
+                                );
+                            }
                         }
                         HttpMethod::Patch | HttpMethod::Put => {
                             let ep = ep_arc.clone();
                             let r = res.clone();
-                            cfg.route(
-                                &actix_path,
-                                web::method(match endpoint.method {
-                                    HttpMethod::Patch => actix_web::http::Method::PATCH,
-                                    _ => actix_web::http::Method::PUT,
-                                })
-                                .to(
-                                    move |req,
-                                          state: web::Data<Arc<AppState>>,
-                                          path: web::Path<String>,
-                                          body: web::Json<serde_json::Value>| {
-                                        let ep = web::Data::new(ep.clone());
-                                        let r = web::Data::new(r.clone());
-                                        crud::handle_update(req, state, r, ep, path, body)
-                                    },
-                                ),
-                            );
+                            if endpoint.upload.is_some() {
+                                cfg.route(
+                                    &actix_path,
+                                    web::method(match endpoint.method {
+                                        HttpMethod::Patch => actix_web::http::Method::PATCH,
+                                        _ => actix_web::http::Method::PUT,
+                                    })
+                                    .to(
+                                        move |req,
+                                              state: web::Data<Arc<AppState>>,
+                                              path: web::Path<String>,
+                                              payload: Multipart| {
+                                            let ep = web::Data::new(ep.clone());
+                                            let r = web::Data::new(r.clone());
+                                            crud::handle_update_upload(req, state, r, ep, path, payload)
+                                        },
+                                    ),
+                                );
+                            } else {
+                                cfg.route(
+                                    &actix_path,
+                                    web::method(match endpoint.method {
+                                        HttpMethod::Patch => actix_web::http::Method::PATCH,
+                                        _ => actix_web::http::Method::PUT,
+                                    })
+                                    .to(
+                                        move |req,
+                                              state: web::Data<Arc<AppState>>,
+                                              path: web::Path<String>,
+                                              body: web::Json<serde_json::Value>| {
+                                            let ep = web::Data::new(ep.clone());
+                                            let r = web::Data::new(r.clone());
+                                            crud::handle_update(req, state, r, ep, path, body)
+                                        },
+                                    ),
+                                );
+                            }
                         }
                         HttpMethod::Delete => {
                             let ep = ep_arc.clone();
