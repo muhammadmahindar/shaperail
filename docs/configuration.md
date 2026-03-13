@@ -110,7 +110,7 @@ protocols:
 | Value | Description |
 | --- | --- |
 | `rest` | REST API (list, get, create, update, delete) — always available when a database is configured. |
-| `graphql` | GraphQL endpoint at `/graphql` with queries, mutations, and subscriptions (M15; in progress). |
+| `graphql` | GraphQL endpoint at `/graphql` and Playground at `/graphql/playground`. Queries (list, get, relations) and mutations (create, update, delete) with the same auth as REST. |
 
 Only `rest` and `graphql` are allowed. Unknown values cause a parse error.
 

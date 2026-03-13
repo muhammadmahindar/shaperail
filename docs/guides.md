@@ -24,5 +24,6 @@ Task-focused guides for building and running a Shaperail application.
 | [**File storage**]({{ '/file-storage/' | relative_url }}) | File fields, upload config on endpoints, backends (local, S3, GCS, Azure), signed URLs, image processing, orphan cleanup. |
 | [**Events and webhooks**]({{ '/events-and-webhooks/' | relative_url }}) | Auto-emitted events, custom events, subscribers (job, webhook, channel, hook), outbound webhooks with HMAC, inbound webhooks. |
 | [**Observability**]({{ '/observability/' | relative_url }}) | Structured logging, request_id, PII redaction, slow query log; `/health` and `/health/ready`; Prometheus metrics; OpenTelemetry. |
+| [**GraphQL**]({{ '/graphql/' | relative_url }}) | Enable with `protocols: [rest, graphql]`. Queries (list, get, relations), mutations (create, update, delete), same auth as REST, Playground at `/graphql/playground`. |
 
-Pick a guide by task: auth, migrations, Docker, caching, jobs, WebSockets, files, events, or observability.
+Pick a guide by task: auth, migrations, Docker, caching, jobs, WebSockets, files, events, observability, or GraphQL.

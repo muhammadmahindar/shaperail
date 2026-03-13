@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ORM-backed CRUD path** — `OrmResourceQuery` and `OrmBackedStore`; `build_orm_store_registry(manager, resources)` builds a store registry when using `databases:`.
 - **Scaffolded main** — When `config.databases` is present, app creates `DatabaseManager`, runs migrations on default DB URL, and uses ORM stores; otherwise keeps single-DB `generated::build_store_registry(pool)`.
 - **Documentation** — Configuration reference documents `databases:` and `db:`; resource guide and Blog API example updated for multi-DB; index and reference pages mention multi-database.
+- **GraphQL (M15)** — Optional GraphQL API from the same resource schema. Enable with `protocols: [rest, graphql]` in `shaperail.config.yaml`. Queries: list (filters, cursor pagination), get by id, nested relations (belongs_to, has_many, has_one). Mutations: create, update, delete with the same auth as REST (JWT, API key, RBAC, owner checks). `POST /graphql` and `GET /graphql/playground` for development. New [GraphQL guide](https://shaperail.io/graphql/) in the docs.
 
 ### Changed
 

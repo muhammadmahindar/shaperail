@@ -5,7 +5,7 @@ nav_order: 1
 
 # Shaperail
 
-**An AI-native Rust backend framework.** Define resources in YAML; get a production-ready REST API with auth, caching, jobs, WebSockets, and OpenAPI — with one canonical schema as the source of truth.
+**An AI-native Rust backend framework.** Define resources in YAML; get a production-ready REST API and optional GraphQL with auth, caching, jobs, WebSockets, and OpenAPI — with one canonical schema as the source of truth.
 
 *Documentation for v{{ site.release_version }}.*
 
@@ -27,6 +27,8 @@ Your app is available at:
 | --- | --- |
 | `http://localhost:3000/docs` | Interactive API docs |
 | `http://localhost:3000/openapi.json` | OpenAPI 3.1 spec |
+| `http://localhost:3000/graphql` | GraphQL endpoint (when `protocols` includes `graphql`) |
+| `http://localhost:3000/graphql/playground` | GraphQL Playground (dev) |
 | `http://localhost:3000/health` | Liveness check |
 | `http://localhost:3000/health/ready` | Readiness (DB + Redis) |
 | `http://localhost:3000/metrics` | Prometheus metrics |
@@ -80,6 +82,7 @@ Generated Rust, OpenAPI, and routes live in `generated/` and are not hand-edited
 ## Features at a glance
 
 - **REST API** — List, get, create, update, delete, bulk create/delete; cursor or offset pagination; filters, sort, full-text search; field selection and relation loading (`?include=…`).
+- **GraphQL** — Same resource schema drives both REST and GraphQL. Enable with `protocols: [rest, graphql]` in `shaperail.config.yaml`. Queries: list (filters, pagination), get by id, nested relations (belongs_to, has_many, has_one). Mutations: create, update, delete with the same auth as REST. Playground at `/graphql/playground`.
 - **Multi-database** — Optional `databases:` in config with named connections (e.g. `default`, `analytics`). Per-resource `db:` routes that resource to a connection; migrations run against `default`.
 - **API versioning** — Per-resource `version` field prefixes all routes (`/v1/users`, `/v2/orders`). OpenAPI spec and CLI output reflect versioned paths.
 - **Controllers** — Synchronous before/after business logic on write endpoints. Validate input, normalize data, enrich responses — all within the request lifecycle.
@@ -102,7 +105,7 @@ Generated Rust, OpenAPI, and routes live in `generated/` and are not hand-edited
 
 ### Guides
 
-- [**Guides**]({{ '/guides/' | relative_url }}) — Auth, controllers, migrations, Docker, caching, jobs, WebSockets, file storage, events, observability.
+- [**Guides**]({{ '/guides/' | relative_url }}) — Auth, controllers, migrations, Docker, caching, jobs, WebSockets, file storage, events, observability, GraphQL.
 
 ### Reference
 

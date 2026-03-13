@@ -1041,6 +1041,16 @@ async fn main() -> std::io::Result<()> {
     let jwt_config_clone = jwt_config.clone();
     let openapi_json_clone = openapi_json.clone();
 
+    let graphql_schema = if config.protocols.iter().any(|p| p == "graphql") {
+        Some(
+            shaperail_runtime::graphql::build_schema(&resources, state.clone())
+                .map_err(|e| io_error(e.to_string()))?,
+        )
+    } else {
+        None
+    };
+    let graphql_schema_clone = graphql_schema.clone();
+
     HttpServer::new(move || {
         let st = state_clone.clone();
         let res = resources_clone.clone();
@@ -1059,6 +1069,12 @@ async fn main() -> std::io::Result<()> {
             .route("/docs", web::get().to(docs_handler));
         if let Some(ref jwt) = jwt_config_clone {
             app = app.app_data(web::Data::new(jwt.clone()));
+        }
+        if let Some(ref schema) = graphql_schema_clone {
+            app = app
+                .app_data(web::Data::new(schema.clone()))
+                .route("/graphql", web::post().to(shaperail_runtime::graphql::graphql_handler))
+                .route("/graphql/playground", web::get().to(shaperail_runtime::graphql::playground_handler));
         }
         app.configure(|cfg| register_all_resources(cfg, &res, st))
     })

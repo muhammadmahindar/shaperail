@@ -2,6 +2,7 @@ pub mod auth;
 pub mod cache;
 pub mod db;
 pub mod events;
+pub mod graphql;
 pub mod handlers;
 pub mod jobs;
 pub mod observability;
