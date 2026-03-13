@@ -426,8 +426,18 @@ fn serve_check_validates_scaffolded_project() {
         .stdout(predicate::str::contains("Command: cargo"));
 }
 
+/// Requires DATABASE_URL (e.g. CI or `docker compose up -d`). Skips when unset so
+/// `cargo test` passes without a local Postgres.
 #[test]
 fn init_scaffold_compiles_with_local_workspace_deps() {
+    let database_url = match std::env::var("DATABASE_URL") {
+        Ok(url) => url,
+        Err(_) => {
+            eprintln!("Skipping: DATABASE_URL not set (set it or run in CI to run this test)");
+            return;
+        }
+    };
+
     let tmp = TempDir::new().unwrap();
     let root = workspace_root();
     let project_dir = tmp.path().join("compile-check");
@@ -443,6 +453,7 @@ fn init_scaffold_compiles_with_local_workspace_deps() {
     let status = StdCommand::new("cargo")
         .args(["check", "--offline"])
         .env("CARGO_TARGET_DIR", &target_dir)
+        .env("DATABASE_URL", &database_url)
         .current_dir(&project_dir)
         .status()
         .unwrap();
