@@ -62,7 +62,7 @@ deterministic generation, and loud failure on invalid input.
 ## Exact Resource File Format (from PRD — this is what users write)
 ```yaml
 resource: users       # "resource:" key, not "name:"
-version: 1
+version: 1            # drives route prefix: /v1/...
 
 schema:
   id:        { type: uuid, primary: true, generated: true }
@@ -73,6 +73,7 @@ schema:
   created_at: { type: timestamp, generated: true }
   updated_at: { type: timestamp, generated: true }
 
+# All paths below are auto-prefixed with /v{version} (e.g. /v1/users)
 endpoints:
   list:
     method: GET
@@ -88,7 +89,7 @@ endpoints:
     path: /users
     auth: [admin]
     input: [email, name, role, org_id]
-    hooks: [validate_org]
+    controller: { before: validate_org }   # replaces hooks — see resources/users.controller.rs
     events: [user.created]
     jobs: [send_welcome_email]
 
@@ -158,7 +159,7 @@ Active: agent_docs/current-milestone.md
 - agent_docs/architecture.md      → crate structure + boundaries
 - agent_docs/resource-format.md   → exact YAML spec (match PRD exactly)
 - agent_docs/codegen-patterns.md  → Rust code generation patterns
-- agent_docs/hooks-system.md      → HookContext + hook patterns
+- agent_docs/hooks-system.md      → Controller system (before/after) + ControllerContext
 - agent_docs/testing-strategy.md  → what to test at each layer
 - agent_docs/docker.md            → Docker dev + CI + release image setup
 - agent_docs/release.md           → crates.io publish + GitHub Releases

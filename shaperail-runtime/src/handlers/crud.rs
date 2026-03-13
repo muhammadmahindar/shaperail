@@ -25,6 +25,7 @@ pub struct AppState {
     pub pool: sqlx::PgPool,
     pub resources: Vec<ResourceDefinition>,
     pub stores: Option<crate::db::StoreRegistry>,
+    pub controllers: Option<super::controller::ControllerMap>,
     pub jwt_config: Option<Arc<JwtConfig>>,
     pub cache: Option<RedisCache>,
     pub event_emitter: Option<EventEmitter>,
@@ -373,50 +374,6 @@ async fn enqueue_declared_jobs(
     }
 }
 
-async fn enqueue_declared_hooks(
-    state: &AppState,
-    resource: &ResourceDefinition,
-    endpoint: &EndpointSpec,
-    action: &str,
-    data: &serde_json::Value,
-) {
-    let Some(hooks) = endpoint.hooks.as_ref() else {
-        return;
-    };
-
-    let Some(job_queue) = state.job_queue.as_ref() else {
-        tracing::warn!(
-            resource = %resource.resource,
-            action = action,
-            "Endpoint declares hooks but no job queue is configured"
-        );
-        return;
-    };
-
-    for hook_name in hooks {
-        let payload = serde_json::json!({
-            "hook": hook_name,
-            "payload": {
-                "resource": resource.resource.as_str(),
-                "action": action,
-                "data": data,
-            }
-        });
-        if let Err(e) = job_queue
-            .enqueue("shaperail:hook_execute", payload, JobPriority::Normal)
-            .await
-        {
-            tracing::warn!(
-                hook = %hook_name,
-                resource = %resource.resource,
-                action = action,
-                error = %e,
-                "Failed to enqueue declared endpoint hook (non-blocking)"
-            );
-        }
-    }
-}
-
 async fn run_write_side_effects(
     state: &AppState,
     resource: &ResourceDefinition,
@@ -428,7 +385,6 @@ async fn run_write_side_effects(
     auto_emit_event(state, resource, action, data).await;
     emit_declared_events(state, resource, endpoint, action, data).await;
     enqueue_declared_jobs(state, resource, endpoint, action, data).await;
-    enqueue_declared_hooks(state, resource, endpoint, action, data).await;
 }
 
 fn schedule_file_cleanup(resource: &ResourceDefinition, deleted_data: &serde_json::Value) {
@@ -484,6 +440,91 @@ async fn invalidate_cache(state: &AppState, resource: &ResourceDefinition, actio
     }
 }
 
+/// Runs a before-controller if declared on the endpoint.
+///
+/// Builds a `ControllerContext`, calls the named function, and returns the
+/// (potentially modified) input map. Returns the input unchanged if no
+/// before-controller is declared.
+async fn run_before_controller(
+    state: &AppState,
+    resource: &ResourceDefinition,
+    endpoint: &EndpointSpec,
+    input: serde_json::Map<String, serde_json::Value>,
+    user: Option<&AuthenticatedUser>,
+    req: &HttpRequest,
+) -> Result<serde_json::Map<String, serde_json::Value>, ShaperailError> {
+    let name = match endpoint
+        .controller
+        .as_ref()
+        .and_then(|c| c.before.as_deref())
+    {
+        Some(n) => n,
+        None => return Ok(input),
+    };
+    let controllers = state.controllers.as_ref().ok_or_else(|| {
+        ShaperailError::Internal(format!(
+            "Endpoint declares controller.before '{name}' but no controller registry is configured"
+        ))
+    })?;
+    let headers = req
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
+    let mut ctx = super::controller::Context {
+        input,
+        data: None,
+        user: user.cloned(),
+        pool: state.pool.clone(),
+        headers,
+        response_headers: vec![],
+    };
+    controllers.call(&resource.resource, name, &mut ctx).await?;
+    Ok(ctx.input)
+}
+
+/// Runs an after-controller if declared on the endpoint.
+///
+/// Passes the DB result data to the controller, which can modify it.
+/// Returns the (potentially modified) data.
+async fn run_after_controller(
+    state: &AppState,
+    resource: &ResourceDefinition,
+    endpoint: &EndpointSpec,
+    data: serde_json::Value,
+    user: Option<&AuthenticatedUser>,
+    req: &HttpRequest,
+) -> Result<serde_json::Value, ShaperailError> {
+    let name = match endpoint
+        .controller
+        .as_ref()
+        .and_then(|c| c.after.as_deref())
+    {
+        Some(n) => n,
+        None => return Ok(data),
+    };
+    let controllers = state.controllers.as_ref().ok_or_else(|| {
+        ShaperailError::Internal(format!(
+            "Endpoint declares controller.after '{name}' but no controller registry is configured"
+        ))
+    })?;
+    let headers = req
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
+    let mut ctx = super::controller::Context {
+        input: serde_json::Map::new(),
+        data: Some(data),
+        user: user.cloned(),
+        pool: state.pool.clone(),
+        headers,
+        response_headers: vec![],
+    };
+    controllers.call(&resource.resource, name, &mut ctx).await?;
+    Ok(ctx.data.unwrap_or(serde_json::Value::Null))
+}
+
 /// Generates an Actix-web create handler.
 pub async fn handle_create(
     req: HttpRequest,
@@ -492,9 +533,20 @@ pub async fn handle_create(
     endpoint: web::Data<Arc<EndpointSpec>>,
     body: web::Json<serde_json::Value>,
 ) -> Result<HttpResponse, ShaperailError> {
-    enforce_auth(&req, &endpoint)?;
+    let user = enforce_auth(&req, &endpoint)?;
     let input_data = extract_input(&body, &resource, &endpoint)?;
     validate_input(&input_data, &resource)?;
+
+    // Before-controller: can modify input
+    let input_data = run_before_controller(
+        &state,
+        &resource,
+        &endpoint,
+        input_data,
+        user.as_ref(),
+        &req,
+    )
+    .await?;
 
     let store_opt = store_for_or_error(&state, &resource)?;
     let row = if let Some(store) = store_opt {
@@ -506,6 +558,9 @@ pub async fn handle_create(
     let params = parse_item_params(&req);
     let side_effect_data = row.0.clone();
     let mut data = row.0;
+
+    // After-controller: can modify response data
+    data = run_after_controller(&state, &resource, &endpoint, data, user.as_ref(), &req).await?;
 
     if !params.fields.is_empty() {
         data = response::select_fields(&data, &params.fields);
@@ -573,6 +628,17 @@ pub async fn handle_update(
         }
     }
 
+    // Before-controller: can modify input
+    let input_data = run_before_controller(
+        &state,
+        &resource,
+        &endpoint,
+        input_data,
+        user.as_ref(),
+        &req,
+    )
+    .await?;
+
     let row = if let Some(store) = store_opt {
         store.update_by_id(&id, &input_data).await?
     } else {
@@ -582,6 +648,9 @@ pub async fn handle_update(
     let params = parse_item_params(&req);
     let side_effect_data = row.0.clone();
     let mut data = row.0;
+
+    // After-controller: can modify response data
+    data = run_after_controller(&state, &resource, &endpoint, data, user.as_ref(), &req).await?;
 
     if !params.fields.is_empty() {
         data = response::select_fields(&data, &params.fields);
@@ -662,6 +731,10 @@ pub async fn handle_delete(
         }
     }
 
+    // Before-controller: can halt deletion
+    let input = serde_json::Map::new();
+    let _ = run_before_controller(&state, &resource, &endpoint, input, user.as_ref(), &req).await?;
+
     let (result, deleted_data) = if endpoint.soft_delete {
         let row = if let Some(ref store) = store_opt {
             store.soft_delete_by_id(&id).await?
@@ -741,7 +814,6 @@ pub async fn handle_bulk_create(
         auto_emit_event(&state, &resource, "created", item).await;
         emit_declared_events(&state, &resource, &endpoint, "created", item).await;
         enqueue_declared_jobs(&state, &resource, &endpoint, "created", item).await;
-        enqueue_declared_hooks(&state, &resource, &endpoint, "created", item).await;
     }
     Ok(response::bulk(results))
 }
@@ -811,7 +883,6 @@ pub async fn handle_bulk_delete(
         auto_emit_event(&state, &resource, "deleted", item).await;
         emit_declared_events(&state, &resource, &endpoint, "deleted", item).await;
         enqueue_declared_jobs(&state, &resource, &endpoint, "deleted", item).await;
-        enqueue_declared_hooks(&state, &resource, &endpoint, "deleted", item).await;
     }
     Ok(response::bulk(results))
 }
@@ -1139,7 +1210,7 @@ mod tests {
             pagination: None,
             sort: None,
             cache: None,
-            hooks: None,
+            controller: None,
             events: None,
             jobs: None,
             upload: None,
@@ -1169,7 +1240,7 @@ mod tests {
             pagination: None,
             sort: None,
             cache: None,
-            hooks: None,
+            controller: None,
             events: None,
             jobs: None,
             upload: None,

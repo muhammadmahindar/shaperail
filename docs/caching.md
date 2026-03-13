@@ -100,7 +100,8 @@ The URL follows standard Redis URI format: `redis://host:port/db`.
 You can also set it in `shaperail.config.yaml`:
 
 ```yaml
-redis:
+cache:
+  type: redis
   url: redis://localhost:6379
 ```
 

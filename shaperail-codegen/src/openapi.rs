@@ -74,7 +74,8 @@ pub fn generate(config: &ProjectConfig, resources: &[ResourceDefinition]) -> ser
             sorted_endpoints.sort_by_key(|(name, _)| *name);
 
             for (action, ep) in sorted_endpoints {
-                let openapi_path = ep.path.replace(":id", "{id}");
+                let openapi_path =
+                    format!("/v{}{}", resource.version, ep.path.replace(":id", "{id}"));
                 let method = ep.method.to_string().to_lowercase();
 
                 let operation =
@@ -584,10 +585,18 @@ fn build_operation(
     }
 
     // Vendor extensions
-    if let Some(hooks) = &ep.hooks {
-        if !hooks.is_empty() {
-            operation.insert("x-shaperail-hooks".to_string(), serde_json::json!(hooks));
+    if let Some(controller) = &ep.controller {
+        let mut ctrl = serde_json::Map::new();
+        if let Some(before) = &controller.before {
+            ctrl.insert("before".to_string(), serde_json::json!(before));
         }
+        if let Some(after) = &controller.after {
+            ctrl.insert("after".to_string(), serde_json::json!(after));
+        }
+        operation.insert(
+            "x-shaperail-controller".to_string(),
+            serde_json::json!(ctrl),
+        );
     }
     if let Some(events) = &ep.events {
         if !events.is_empty() {
@@ -761,7 +770,7 @@ mod tests {
                     ttl: 60,
                     invalidate_on: None,
                 }),
-                hooks: None,
+                controller: None,
                 events: None,
                 jobs: None,
                 upload: None,
@@ -784,7 +793,10 @@ mod tests {
                 pagination: None,
                 sort: None,
                 cache: None,
-                hooks: Some(vec!["validate_org".to_string()]),
+                controller: Some(shaperail_core::ControllerSpec {
+                    before: Some("validate_org".to_string()),
+                    after: None,
+                }),
                 events: Some(vec!["user.created".to_string()]),
                 jobs: Some(vec!["send_welcome_email".to_string()]),
                 upload: None,
@@ -806,7 +818,7 @@ mod tests {
                 pagination: None,
                 sort: None,
                 cache: None,
-                hooks: None,
+                controller: None,
                 events: None,
                 jobs: None,
                 upload: None,
@@ -825,7 +837,7 @@ mod tests {
                 pagination: None,
                 sort: None,
                 cache: None,
-                hooks: None,
+                controller: None,
                 events: None,
                 jobs: None,
                 upload: None,
@@ -919,7 +931,7 @@ mod tests {
                 pagination: None,
                 sort: None,
                 cache: None,
-                hooks: None,
+                controller: None,
                 events: None,
                 jobs: None,
                 upload: Some(UploadSpec {
@@ -979,12 +991,12 @@ mod tests {
         let paths = spec["paths"].as_object().expect("paths object");
 
         // /users should have GET and POST
-        let users_path = paths.get("/users").expect("/users path");
-        assert!(users_path.get("get").is_some(), "GET /users");
-        assert!(users_path.get("post").is_some(), "POST /users");
+        let users_path = paths.get("/v1/users").expect("/v1/users path");
+        assert!(users_path.get("get").is_some(), "GET /v1/users");
+        assert!(users_path.get("post").is_some(), "POST /v1/users");
 
-        // /users/{id} should have PATCH and DELETE
-        let users_id_path = paths.get("/users/{id}").expect("/users/{{id}} path");
+        // /v1/users/{id} should have PATCH and DELETE
+        let users_id_path = paths.get("/v1/users/{id}").expect("/v1/users/{{id}} path");
         assert!(users_id_path.get("patch").is_some(), "PATCH /users/{{id}}");
         assert!(
             users_id_path.get("delete").is_some(),
@@ -998,7 +1010,7 @@ mod tests {
         let resources = vec![sample_resource()];
         let spec = generate(&config, &resources);
 
-        let list_op = &spec["paths"]["/users"]["get"];
+        let list_op = &spec["paths"]["/v1/users"]["get"];
         let params = list_op["parameters"].as_array().expect("params array");
 
         let param_names: Vec<&str> = params.iter().filter_map(|p| p["name"].as_str()).collect();
@@ -1013,7 +1025,7 @@ mod tests {
         let resources = vec![sample_resource()];
         let spec = generate(&config, &resources);
 
-        let list_op = &spec["paths"]["/users"]["get"];
+        let list_op = &spec["paths"]["/v1/users"]["get"];
         let params = list_op["parameters"].as_array().expect("params array");
 
         let param_names: Vec<&str> = params.iter().filter_map(|p| p["name"].as_str()).collect();
@@ -1027,7 +1039,7 @@ mod tests {
         let resources = vec![sample_resource()];
         let spec = generate(&config, &resources);
 
-        let list_op = &spec["paths"]["/users"]["get"];
+        let list_op = &spec["paths"]["/v1/users"]["get"];
         let params = list_op["parameters"].as_array().expect("params array");
 
         let param_names: Vec<&str> = params.iter().filter_map(|p| p["name"].as_str()).collect();
@@ -1042,7 +1054,7 @@ mod tests {
         let spec = generate(&config, &resources);
 
         // Check create endpoint has 401, 403, 422, 429, 500
-        let create_op = &spec["paths"]["/users"]["post"];
+        let create_op = &spec["paths"]["/v1/users"]["post"];
         let responses = create_op["responses"].as_object().expect("responses");
 
         assert!(responses.contains_key("401"), "401 Unauthorized");
@@ -1052,12 +1064,12 @@ mod tests {
         assert!(responses.contains_key("500"), "500 Internal server error");
 
         // Check get (list) has 401, 403, 429, 500 but NOT 404 (no :id)
-        let list_op = &spec["paths"]["/users"]["get"];
+        let list_op = &spec["paths"]["/v1/users"]["get"];
         let list_responses = list_op["responses"].as_object().expect("responses");
         assert!(!list_responses.contains_key("404"), "list has no 404");
 
         // Check update has 404 (has :id)
-        let update_op = &spec["paths"]["/users/{id}"]["patch"];
+        let update_op = &spec["paths"]["/v1/users/{id}"]["patch"];
         let update_responses = update_op["responses"].as_object().expect("responses");
         assert!(update_responses.contains_key("404"), "update has 404");
     }
@@ -1068,10 +1080,10 @@ mod tests {
         let resources = vec![sample_resource()];
         let spec = generate(&config, &resources);
 
-        let create_op = &spec["paths"]["/users"]["post"];
+        let create_op = &spec["paths"]["/v1/users"]["post"];
         assert_eq!(
-            create_op["x-shaperail-hooks"],
-            serde_json::json!(["validate_org"])
+            create_op["x-shaperail-controller"],
+            serde_json::json!({"before": "validate_org"})
         );
         assert_eq!(
             create_op["x-shaperail-events"],
@@ -1116,7 +1128,7 @@ mod tests {
         let resources = vec![sample_resource()];
         let spec = generate(&config, &resources);
 
-        let create_op = &spec["paths"]["/users"]["post"];
+        let create_op = &spec["paths"]["/v1/users"]["post"];
         let schema_ref = &create_op["requestBody"]["content"]["application/json"]["schema"]["$ref"];
         assert_eq!(schema_ref, "#/components/schemas/UsersCreateInput");
     }
@@ -1127,7 +1139,7 @@ mod tests {
         let resources = vec![upload_resource()];
         let spec = generate(&config, &resources);
 
-        let create_op = &spec["paths"]["/assets"]["post"];
+        let create_op = &spec["paths"]["/v1/assets"]["post"];
         let schema = &create_op["requestBody"]["content"]["multipart/form-data"]["schema"];
 
         assert_eq!(schema["properties"]["attachment"]["type"], "string");
@@ -1141,7 +1153,7 @@ mod tests {
         let resources = vec![sample_resource()];
         let spec = generate(&config, &resources);
 
-        let list_op = &spec["paths"]["/users"]["get"];
+        let list_op = &spec["paths"]["/v1/users"]["get"];
         assert!(
             list_op["security"].is_array(),
             "auth endpoints have security"
@@ -1178,7 +1190,7 @@ mod tests {
         let resources = vec![sample_resource()];
         let spec = generate(&config, &resources);
 
-        let delete_op = &spec["paths"]["/users/{id}"]["delete"];
+        let delete_op = &spec["paths"]["/v1/users/{id}"]["delete"];
         let responses = delete_op["responses"].as_object().expect("responses");
         assert!(responses.contains_key("204"), "delete returns 204");
     }
@@ -1189,7 +1201,7 @@ mod tests {
         let resources = vec![sample_resource()];
         let spec = generate(&config, &resources);
 
-        let list_resp = &spec["paths"]["/users"]["get"]["responses"]["200"]["content"]
+        let list_resp = &spec["paths"]["/v1/users"]["get"]["responses"]["200"]["content"]
             ["application/json"]["schema"];
         assert!(list_resp["properties"]["data"]["type"] == "array");
         assert!(list_resp["properties"]["meta"]["type"] == "object");

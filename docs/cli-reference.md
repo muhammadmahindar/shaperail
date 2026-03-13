@@ -8,6 +8,26 @@ The `shaperail` binary is the operational interface to the framework. Most
 projects follow the same loop: scaffold, edit resources, validate, migrate,
 serve, then package.
 
+## All commands
+
+| Command | Description |
+| --- | --- |
+| `shaperail init <name>` | Scaffold a new project (resources, migrations, config, Docker Compose, .env). |
+| `shaperail generate` | Run codegen for all resource files; write generated Rust and artifacts to `generated/`. |
+| `shaperail serve [--port PORT] [--check]` | Start the dev server (with hot reload via cargo-watch). Use `--check` to validate without starting. |
+| `shaperail build [--docker]` | Build release binary. With `--docker`, build a scratch-based Docker image. |
+| `shaperail validate [path]` | Validate resource file(s). Default path: `resources`. |
+| `shaperail test [-- args...]` | Run generated and custom tests (`cargo test` with optional args). |
+| `shaperail migrate [--rollback]` | Generate and apply SQL migrations from resource diff. `--rollback` reverts the last batch. |
+| `shaperail seed [path]` | Load fixture YAML from `seeds/` (or given path) into the database. Default path: `seeds`. |
+| `shaperail export openapi [--output FILE]` | Emit OpenAPI 3.1 spec to stdout or to a file. |
+| `shaperail export sdk --lang <lang> [--output DIR]` | Generate client SDK (e.g. `--lang ts` for TypeScript). |
+| `shaperail doctor` | Check system deps: Rust, PostgreSQL, Redis, sqlx-cli; print fix instructions. |
+| `shaperail routes` | Print all routes with auth requirements. |
+| `shaperail jobs:status [job_id]` | Show job queue depth and recent failures; or inspect a specific job by ID. |
+
+Every command supports `--help`.
+
 ## Core command loop
 
 | Command | When to use it | What it changes |

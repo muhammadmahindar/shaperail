@@ -46,6 +46,7 @@ fn make_state(pool: sqlx::PgPool, jwt: Option<JwtConfig>) -> Arc<AppState> {
         pool,
         resources: vec![],
         stores: None,
+        controllers: None,
         jwt_config: jwt.map(Arc::new),
         cache: None,
         event_emitter: None,
@@ -257,7 +258,7 @@ fn test_asset_resource() -> ResourceDefinition {
             pagination: None,
             sort: None,
             cache: None,
-            hooks: None,
+            controller: None,
             events: None,
             jobs: None,
             upload: Some(shaperail_core::UploadSpec {
@@ -281,7 +282,7 @@ fn test_asset_resource() -> ResourceDefinition {
             pagination: None,
             sort: None,
             cache: None,
-            hooks: None,
+            controller: None,
             events: None,
             jobs: None,
             upload: None,
@@ -524,7 +525,7 @@ fn full_crud_endpoints() -> IndexMap<String, EndpointSpec> {
             pagination: Some(PaginationStyle::Cursor),
             sort: None,
             cache: None,
-            hooks: None,
+            controller: None,
             events: None,
             jobs: None,
             upload: None,
@@ -544,7 +545,7 @@ fn full_crud_endpoints() -> IndexMap<String, EndpointSpec> {
             pagination: None,
             sort: None,
             cache: None,
-            hooks: None,
+            controller: None,
             events: None,
             jobs: None,
             upload: None,
@@ -569,7 +570,7 @@ fn full_crud_endpoints() -> IndexMap<String, EndpointSpec> {
             pagination: None,
             sort: None,
             cache: None,
-            hooks: None,
+            controller: None,
             events: None,
             jobs: None,
             upload: None,
@@ -589,7 +590,7 @@ fn full_crud_endpoints() -> IndexMap<String, EndpointSpec> {
             pagination: None,
             sort: None,
             cache: None,
-            hooks: None,
+            controller: None,
             events: None,
             jobs: None,
             upload: None,
@@ -609,7 +610,7 @@ fn full_crud_endpoints() -> IndexMap<String, EndpointSpec> {
             pagination: None,
             sort: None,
             cache: None,
-            hooks: None,
+            controller: None,
             events: None,
             jobs: None,
             upload: None,
@@ -651,7 +652,7 @@ async fn test_full_crud_cycle(pool: sqlx::PgPool) {
 
     // CREATE
     let req = actix_test::TestRequest::post()
-        .uri("/test_users")
+        .uri("/v1/test_users")
         .set_json(user_payload(
             "crud@example.com",
             "CRUD User",
@@ -669,7 +670,7 @@ async fn test_full_crud_cycle(pool: sqlx::PgPool) {
 
     // GET by ID
     let req = actix_test::TestRequest::get()
-        .uri(&format!("/test_users/{id}"))
+        .uri(&format!("/v1/test_users/{id}"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
@@ -678,7 +679,7 @@ async fn test_full_crud_cycle(pool: sqlx::PgPool) {
 
     // UPDATE name
     let req = actix_test::TestRequest::patch()
-        .uri(&format!("/test_users/{id}"))
+        .uri(&format!("/v1/test_users/{id}"))
         .set_json(json!({"name": "Updated Name"}))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
@@ -688,14 +689,14 @@ async fn test_full_crud_cycle(pool: sqlx::PgPool) {
 
     // SOFT DELETE
     let req = actix_test::TestRequest::delete()
-        .uri(&format!("/test_users/{id}"))
+        .uri(&format!("/v1/test_users/{id}"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 204);
 
     // GET after soft delete should return 404
     let req = actix_test::TestRequest::get()
-        .uri(&format!("/test_users/{id}"))
+        .uri(&format!("/v1/test_users/{id}"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 404, "Soft-deleted record should return 404");
@@ -727,7 +728,7 @@ async fn test_list_with_filters(pool: sqlx::PgPool) {
         ("viewer@example.com", "viewer"),
     ] {
         let req = actix_test::TestRequest::post()
-            .uri("/test_users")
+            .uri("/v1/test_users")
             .set_json(user_payload(email, "Test User", role, &org_id))
             .to_request();
         let resp = actix_test::call_service(&app, req).await;
@@ -736,7 +737,7 @@ async fn test_list_with_filters(pool: sqlx::PgPool) {
 
     // Filter by role=admin
     let req = actix_test::TestRequest::get()
-        .uri("/test_users?filter%5Brole%5D=admin")
+        .uri("/v1/test_users?filter%5Brole%5D=admin")
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
@@ -776,7 +777,7 @@ async fn test_list_with_pagination(pool: sqlx::PgPool) {
     // Insert 5 users
     for i in 0..5 {
         let req = actix_test::TestRequest::post()
-            .uri("/test_users")
+            .uri("/v1/test_users")
             .set_json(user_payload(
                 &format!("page{i}@example.com"),
                 &format!("User {i}"),
@@ -790,7 +791,7 @@ async fn test_list_with_pagination(pool: sqlx::PgPool) {
 
     // First page: limit=2
     let req = actix_test::TestRequest::get()
-        .uri("/test_users?limit=2")
+        .uri("/v1/test_users?limit=2")
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
@@ -804,7 +805,7 @@ async fn test_list_with_pagination(pool: sqlx::PgPool) {
 
     // Second page: use cursor
     let req = actix_test::TestRequest::get()
-        .uri(&format!("/test_users?limit=2&after={cursor}"))
+        .uri(&format!("/v1/test_users?limit=2&after={cursor}"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
@@ -839,7 +840,7 @@ async fn test_validation_rejects_missing_required_field(pool: sqlx::PgPool) {
 
     // Missing "name" (required, no default)
     let req = actix_test::TestRequest::post()
-        .uri("/test_users")
+        .uri("/v1/test_users")
         .set_json(json!({
             "email": "noname@example.com",
             "role": "member",
@@ -881,7 +882,7 @@ async fn test_validation_rejects_invalid_enum(pool: sqlx::PgPool) {
     .await;
 
     let req = actix_test::TestRequest::post()
-        .uri("/test_users")
+        .uri("/v1/test_users")
         .set_json(json!({
             "email": "invalid-role@example.com",
             "name": "Bad Role",
@@ -930,7 +931,7 @@ async fn test_auth_enforcement_rejects_wrong_role(pool: sqlx::PgPool) {
     let member_token = jwt.encode_access("user-2", "member").unwrap();
 
     let req = actix_test::TestRequest::post()
-        .uri("/test_users")
+        .uri("/v1/test_users")
         .insert_header(("Authorization", format!("Bearer {member_token}")))
         .set_json(user_payload(
             "forbidden@example.com",
@@ -975,7 +976,7 @@ async fn test_auth_public_endpoint(pool: sqlx::PgPool) {
     // Seed one record (create has no auth)
     let org_id = uuid::Uuid::new_v4().to_string();
     let req = actix_test::TestRequest::post()
-        .uri("/test_users")
+        .uri("/v1/test_users")
         .set_json(user_payload(
             "public@example.com",
             "Public User",
@@ -988,7 +989,7 @@ async fn test_auth_public_endpoint(pool: sqlx::PgPool) {
 
     // List without any token — should succeed
     let req = actix_test::TestRequest::get()
-        .uri("/test_users")
+        .uri("/v1/test_users")
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(
@@ -1025,7 +1026,7 @@ async fn test_bulk_create(pool: sqlx::PgPool) {
             pagination: None,
             sort: None,
             cache: None,
-            hooks: None,
+            controller: None,
             events: None,
             jobs: None,
             upload: None,
@@ -1050,7 +1051,7 @@ async fn test_bulk_create(pool: sqlx::PgPool) {
     ]);
 
     let req = actix_test::TestRequest::post()
-        .uri("/test_users/bulk")
+        .uri("/v1/test_users/bulk")
         .set_json(payload)
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
@@ -1087,7 +1088,7 @@ async fn test_soft_delete_excludes_from_list(pool: sqlx::PgPool) {
         ("delete@example.com", "Delete"),
     ] {
         let req = actix_test::TestRequest::post()
-            .uri("/test_users")
+            .uri("/v1/test_users")
             .set_json(user_payload(email, name, "member", &org_id))
             .to_request();
         let resp = actix_test::call_service(&app, req).await;
@@ -1099,14 +1100,14 @@ async fn test_soft_delete_excludes_from_list(pool: sqlx::PgPool) {
     // Soft-delete the second user
     let delete_id = &created_ids[1];
     let req = actix_test::TestRequest::delete()
-        .uri(&format!("/test_users/{delete_id}"))
+        .uri(&format!("/v1/test_users/{delete_id}"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 204);
 
     // List should not include the deleted user
     let req = actix_test::TestRequest::get()
-        .uri(&format!("/test_users?filter%5Borg_id%5D={org_id}"))
+        .uri(&format!("/v1/test_users?filter%5Borg_id%5D={org_id}"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
@@ -1145,7 +1146,7 @@ async fn test_field_selection(pool: sqlx::PgPool) {
 
     // Create a user
     let req = actix_test::TestRequest::post()
-        .uri("/test_users")
+        .uri("/v1/test_users")
         .set_json(user_payload(
             "fields@example.com",
             "Fields User",
@@ -1158,7 +1159,7 @@ async fn test_field_selection(pool: sqlx::PgPool) {
 
     // List with field selection
     let req = actix_test::TestRequest::get()
-        .uri("/test_users?fields=name,email")
+        .uri("/v1/test_users?fields=name,email")
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
@@ -1204,6 +1205,7 @@ async fn test_metrics_capture_requests_errors_and_cache(pool: sqlx::PgPool) {
         pool: pool.clone(),
         resources: vec![],
         stores: None,
+        controllers: None,
         jwt_config: None,
         cache: Some(RedisCache::new(redis_pool.clone())),
         event_emitter: None,
@@ -1223,7 +1225,7 @@ async fn test_metrics_capture_requests_errors_and_cache(pool: sqlx::PgPool) {
 
     let org_id = uuid::Uuid::new_v4().to_string();
     let req = actix_test::TestRequest::post()
-        .uri("/test_users")
+        .uri("/v1/test_users")
         .set_json(user_payload(
             "metrics@example.com",
             "Metrics User",
@@ -1235,14 +1237,14 @@ async fn test_metrics_capture_requests_errors_and_cache(pool: sqlx::PgPool) {
     assert_eq!(resp.status(), 201);
 
     let req = actix_test::TestRequest::get()
-        .uri(&format!("/test_users?filter%5Borg_id%5D={org_id}"))
+        .uri(&format!("/v1/test_users?filter%5Borg_id%5D={org_id}"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
     assert_eq!(resp.headers().get("X-Cache").unwrap(), "MISS");
 
     let req = actix_test::TestRequest::get()
-        .uri(&format!("/test_users?filter%5Borg_id%5D={org_id}"))
+        .uri(&format!("/v1/test_users?filter%5Borg_id%5D={org_id}"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
@@ -1250,7 +1252,7 @@ async fn test_metrics_capture_requests_errors_and_cache(pool: sqlx::PgPool) {
 
     let missing_id = uuid::Uuid::new_v4();
     let req = actix_test::TestRequest::get()
-        .uri(&format!("/test_users/{missing_id}"))
+        .uri(&format!("/v1/test_users/{missing_id}"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 404);
@@ -1293,6 +1295,7 @@ async fn test_list_cache_hit_serves_stale_data_after_db_delete(pool: sqlx::PgPoo
         pool: pool.clone(),
         resources: vec![],
         stores: None,
+        controllers: None,
         jwt_config: None,
         cache: Some(RedisCache::new(redis_pool.clone())),
         event_emitter: None,
@@ -1310,7 +1313,7 @@ async fn test_list_cache_hit_serves_stale_data_after_db_delete(pool: sqlx::PgPoo
 
     let org_id = uuid::Uuid::new_v4().to_string();
     let req = actix_test::TestRequest::post()
-        .uri("/test_users")
+        .uri("/v1/test_users")
         .set_json(user_payload(
             "cache-hit@example.com",
             "Cached User",
@@ -1321,7 +1324,7 @@ async fn test_list_cache_hit_serves_stale_data_after_db_delete(pool: sqlx::PgPoo
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 201);
 
-    let list_uri = format!("/test_users?filter%5Borg_id%5D={org_id}");
+    let list_uri = format!("/v1/test_users?filter%5Borg_id%5D={org_id}");
 
     let req = actix_test::TestRequest::get().uri(&list_uri).to_request();
     let resp = actix_test::call_service(&app, req).await;
@@ -1367,6 +1370,7 @@ async fn test_write_invalidates_cached_list(pool: sqlx::PgPool) {
         pool: pool.clone(),
         resources: vec![],
         stores: None,
+        controllers: None,
         jwt_config: None,
         cache: Some(RedisCache::new(redis_pool.clone())),
         event_emitter: None,
@@ -1385,14 +1389,14 @@ async fn test_write_invalidates_cached_list(pool: sqlx::PgPool) {
 
     for email in ["invalidate-1@example.com", "invalidate-2@example.com"] {
         let req = actix_test::TestRequest::post()
-            .uri("/test_users")
+            .uri("/v1/test_users")
             .set_json(user_payload(email, "Invalidate User", "admin", &org_id))
             .to_request();
         let resp = actix_test::call_service(&app, req).await;
         assert_eq!(resp.status(), 201);
     }
 
-    let list_uri = format!("/test_users?filter%5Borg_id%5D={org_id}");
+    let list_uri = format!("/v1/test_users?filter%5Borg_id%5D={org_id}");
 
     let req = actix_test::TestRequest::get().uri(&list_uri).to_request();
     let resp = actix_test::call_service(&app, req).await;
@@ -1405,7 +1409,7 @@ async fn test_write_invalidates_cached_list(pool: sqlx::PgPool) {
     assert_eq!(resp.headers().get("X-Cache").unwrap(), "HIT");
 
     let req = actix_test::TestRequest::post()
-        .uri("/test_users")
+        .uri("/v1/test_users")
         .set_json(user_payload(
             "invalidate-3@example.com",
             "Invalidate User",
@@ -1442,6 +1446,7 @@ async fn test_nocache_bypasses_cached_response(pool: sqlx::PgPool) {
         pool: pool.clone(),
         resources: vec![],
         stores: None,
+        controllers: None,
         jwt_config: None,
         cache: Some(RedisCache::new(redis_pool.clone())),
         event_emitter: None,
@@ -1458,7 +1463,7 @@ async fn test_nocache_bypasses_cached_response(pool: sqlx::PgPool) {
 
     let org_id = uuid::Uuid::new_v4().to_string();
     let req = actix_test::TestRequest::post()
-        .uri("/test_users")
+        .uri("/v1/test_users")
         .set_json(user_payload(
             "bypass@example.com",
             "Bypass User",
@@ -1469,7 +1474,7 @@ async fn test_nocache_bypasses_cached_response(pool: sqlx::PgPool) {
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 201);
 
-    let list_uri = format!("/test_users?filter%5Borg_id%5D={org_id}");
+    let list_uri = format!("/v1/test_users?filter%5Borg_id%5D={org_id}");
     let req = actix_test::TestRequest::get().uri(&list_uri).to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
@@ -1525,7 +1530,7 @@ async fn test_upload_endpoint_persists_file_path_and_metadata(pool: sqlx::PgPool
     );
 
     let req = actix_test::TestRequest::post()
-        .uri("/test_assets")
+        .uri("/v1/test_assets")
         .insert_header((
             "content-type",
             format!("multipart/form-data; boundary={boundary}"),
@@ -1592,7 +1597,7 @@ async fn test_delete_endpoint_cleans_up_uploaded_file(pool: sqlx::PgPool) {
     );
 
     let req = actix_test::TestRequest::post()
-        .uri("/test_assets")
+        .uri("/v1/test_assets")
         .insert_header((
             "content-type",
             format!("multipart/form-data; boundary={boundary}"),
@@ -1615,7 +1620,7 @@ async fn test_delete_endpoint_cleans_up_uploaded_file(pool: sqlx::PgPool) {
     );
 
     let req = actix_test::TestRequest::delete()
-        .uri(&format!("/test_assets/{id}"))
+        .uri(&format!("/v1/test_assets/{id}"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 204);
@@ -1766,7 +1771,7 @@ fn org_resource() -> ResourceDefinition {
             pagination: Some(PaginationStyle::Cursor),
             sort: None,
             cache: None,
-            hooks: None,
+            controller: None,
             events: None,
             jobs: None,
             upload: None,
@@ -1785,7 +1790,7 @@ fn org_resource() -> ResourceDefinition {
             pagination: None,
             sort: None,
             cache: None,
-            hooks: None,
+            controller: None,
             events: None,
             jobs: None,
             upload: None,
@@ -1804,7 +1809,7 @@ fn org_resource() -> ResourceDefinition {
             pagination: None,
             sort: None,
             cache: None,
-            hooks: None,
+            controller: None,
             events: None,
             jobs: None,
             upload: None,
@@ -1865,6 +1870,7 @@ async fn test_list_with_include_uses_store(pool: sqlx::PgPool) {
         pool: pool.clone(),
         resources: resources.clone(),
         stores: Some(stores),
+        controllers: None,
         jwt_config: None,
         cache: None,
         event_emitter: None,
@@ -1885,7 +1891,7 @@ async fn test_list_with_include_uses_store(pool: sqlx::PgPool) {
 
     // Create one org
     let create_org = actix_test::TestRequest::post()
-        .uri("/test_orgs")
+        .uri("/v1/test_orgs")
         .set_json(json!({ "name": "Acme Corp" }))
         .to_request();
     let resp = actix_test::call_service(&app, create_org).await;
@@ -1895,7 +1901,7 @@ async fn test_list_with_include_uses_store(pool: sqlx::PgPool) {
 
     // Create user with that org_id
     let create_user = actix_test::TestRequest::post()
-        .uri("/test_users")
+        .uri("/v1/test_users")
         .set_json(user_payload(
             "include@example.com",
             "Include User",
@@ -1908,7 +1914,7 @@ async fn test_list_with_include_uses_store(pool: sqlx::PgPool) {
 
     // List users with include=organization; store path is used for relation loading
     let req = actix_test::TestRequest::get()
-        .uri("/test_users?include=organization")
+        .uri("/v1/test_users?include=organization")
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200, "List with include should return 200");

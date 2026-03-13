@@ -1025,7 +1025,7 @@ mod tests {
                 pagination: None,
                 sort: None,
                 cache: None,
-                hooks: None,
+                controller: None,
                 events: None,
                 jobs: None,
                 upload: None,

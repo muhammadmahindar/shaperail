@@ -58,16 +58,25 @@ default: value     # default value
 sensitive: true    # redacted in logs and error messages
 ```
 
+## Route Prefixing
+The `version` field at the top of each resource YAML drives automatic route
+prefixing. All endpoint paths are prefixed with `/v{version}`.
+
+Example: `version: 1` + `path: /users` produces the route `/v1/users`.
+
+You write `path: /users` in the YAML; the framework registers `/v1/users` at
+runtime. Do not include the version prefix in the `path:` value.
+
 ## Endpoint Format
 ```yaml
 endpoints:
   list:
     method: GET
-    path: /users
-    auth: [role1, role2]     # or: public
+    path: /users                # actual route: /v{version}/users
+    auth: [role1, role2]        # or: public
     filters: [field1, field2]
-    search: [field1, field2] # full-text search across these fields
-    pagination: cursor        # cursor | offset
+    search: [field1, field2]    # full-text search across these fields
+    pagination: cursor           # cursor | offset
     sort: [field1, field2]
     cache: { ttl: 60, invalidate_on: [create, update, delete] }
 
@@ -75,12 +84,38 @@ endpoints:
     method: POST
     path: /users
     auth: [admin]
-    input: [field1, field2]  # subset of schema fields accepted
-    hooks: [hook_fn_name]    # Rust functions in hooks/<resource>.hooks.rs
-    events: [user.created]   # emitted after successful write
-    jobs: [job_name]         # enqueued after successful write
+    input: [field1, field2]     # subset of schema fields accepted
+    controller: { before: validate_org }  # Rust fn in resources/<resource>.controller.rs
+    events: [user.created]      # emitted after successful write
+    jobs: [job_name]            # enqueued after successful write
     upload: { field: avatar_url, storage: s3, max_size: 5mb, types: [jpg, png] }
 ```
+
+## Controller
+Controllers replace the old `hooks:` field. A controller declaration attaches
+custom Rust functions that run before and/or after the default handler logic.
+
+### YAML syntax
+```yaml
+controller: { before: fn_name }              # before only
+controller: { after: fn_name }               # after only
+controller: { before: fn_before, after: fn_after }  # both
+```
+
+### File location
+Controller implementations live in `resources/<resource>.controller.rs`.
+For a resource named `users`, the file is `resources/users.controller.rs`.
+
+### Function signature
+```rust
+pub async fn fn_name(ctx: &mut ControllerContext) -> Result<(), ShaperailError> {
+    // custom logic
+    Ok(())
+}
+```
+
+See `agent_docs/hooks-system.md` (now the controller-system doc) for
+`ControllerContext` fields and usage patterns.
 
 ## Auth Values
 ```

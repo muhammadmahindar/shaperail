@@ -106,12 +106,18 @@ pub fn validate_resource(rd: &ResourceDefinition) -> Vec<ValidationError> {
     // Endpoint validation
     if let Some(endpoints) = &rd.endpoints {
         for (action, ep) in endpoints {
-            // Hooks must be non-empty strings
-            if let Some(hooks) = &ep.hooks {
-                for hook in hooks {
-                    if hook.is_empty() {
+            if let Some(controller) = &ep.controller {
+                if let Some(before) = &controller.before {
+                    if before.is_empty() {
                         errors.push(err(&format!(
-                            "resource '{res}': endpoint '{action}' has an empty hook name"
+                            "resource '{res}': endpoint '{action}' has an empty controller.before name"
+                        )));
+                    }
+                }
+                if let Some(after) = &controller.after {
+                    if after.is_empty() {
+                        errors.push(err(&format!(
+                            "resource '{res}': endpoint '{action}' has an empty controller.after name"
                         )));
                     }
                 }

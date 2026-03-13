@@ -178,7 +178,7 @@ fn init_creates_project_structure() {
     assert!(project_dir.join("src/main.rs").exists());
     assert!(project_dir.join("resources").is_dir());
     assert!(project_dir.join("migrations").is_dir());
-    assert!(project_dir.join("hooks").is_dir());
+    assert!(project_dir.join("controllers").is_dir());
     assert!(project_dir.join("seeds").is_dir());
     assert!(project_dir.join("tests").is_dir());
     assert!(project_dir.join("channels").is_dir());
@@ -274,7 +274,7 @@ fn routes_shows_endpoints() {
         .assert()
         .success()
         .stdout(predicate::str::contains("METHOD"))
-        .stdout(predicate::str::contains("/users"));
+        .stdout(predicate::str::contains("/v1/users"));
 }
 
 // --- Generate test ---

@@ -522,6 +522,7 @@ fn generate_cursor_query(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn generate_offset_query(
     context: &ResourceContext<'_>,
     filter_clause: &str,
@@ -1238,7 +1239,7 @@ mod tests {
                 pagination: Some(PaginationStyle::Cursor),
                 sort: Some(vec!["created_at".to_string()]),
                 cache: None,
-                hooks: None,
+                controller: None,
                 events: None,
                 jobs: None,
                 upload: None,

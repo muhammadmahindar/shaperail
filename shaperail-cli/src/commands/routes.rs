@@ -20,7 +20,8 @@ pub fn run() -> i32 {
                     None => "public".to_string(),
                 };
 
-                println!("{:<8} {:<30} {}", method, ep.path, auth_str);
+                let versioned_path = format!("/v{}{}", resource.version, ep.path);
+                println!("{:<8} {:<30} {}", method, versioned_path, auth_str);
             }
         }
     }

@@ -132,6 +132,28 @@ pub struct UploadSpec {
     pub types: Option<Vec<String>>,
 }
 
+/// Controller specification for synchronous in-request business logic.
+///
+/// Declared per-endpoint in the resource YAML:
+/// ```yaml
+/// controller:
+///   before: validate_org
+///   after: enrich_response
+/// ```
+///
+/// Functions live in `resources/<resource>.controller.rs` and are called
+/// synchronously within the request lifecycle (before/after the DB operation).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControllerSpec {
+    /// Function to call before the DB operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<String>,
+    /// Function to call after the DB operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
+}
+
 /// Specification for a single endpoint in a resource.
 ///
 /// Matches the YAML format:
@@ -179,9 +201,9 @@ pub struct EndpointSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache: Option<CacheSpec>,
 
-    /// Hook function names to execute.
+    /// Controller functions for synchronous in-request business logic.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hooks: Option<Vec<String>>,
+    pub controller: Option<ControllerSpec>,
 
     /// Events to emit after successful execution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -297,14 +319,48 @@ mod tests {
             "path": "/users",
             "auth": ["admin"],
             "input": ["email", "name", "role", "org_id"],
-            "hooks": ["validate_org"],
+            "controller": {"before": "validate_org"},
             "events": ["user.created"],
             "jobs": ["send_welcome_email"]
         }"#;
         let ep: EndpointSpec = serde_json::from_str(json).unwrap();
         assert_eq!(ep.method, HttpMethod::Post);
-        assert_eq!(ep.hooks.as_ref().unwrap(), &["validate_org"]);
+        let ctrl = ep.controller.as_ref().unwrap();
+        assert_eq!(ctrl.before.as_deref(), Some("validate_org"));
+        assert!(ctrl.after.is_none());
         assert_eq!(ep.jobs.as_ref().unwrap(), &["send_welcome_email"]);
+    }
+
+    #[test]
+    fn controller_spec_full() {
+        let json = r#"{"before": "check_input", "after": "enrich"}"#;
+        let cs: ControllerSpec = serde_json::from_str(json).unwrap();
+        assert_eq!(cs.before.as_deref(), Some("check_input"));
+        assert_eq!(cs.after.as_deref(), Some("enrich"));
+    }
+
+    #[test]
+    fn controller_spec_after_only() {
+        let json = r#"{"after": "enrich"}"#;
+        let cs: ControllerSpec = serde_json::from_str(json).unwrap();
+        assert!(cs.before.is_none());
+        assert_eq!(cs.after.as_deref(), Some("enrich"));
+    }
+
+    #[test]
+    fn hooks_key_rejected() {
+        let json = r#"{
+            "method": "POST",
+            "path": "/users",
+            "hooks": ["validate_org"]
+        }"#;
+        let result = serde_json::from_str::<EndpointSpec>(json);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("unknown field"),
+            "Expected deny_unknown_fields to reject 'hooks', got: {err}"
+        );
     }
 
     #[test]

@@ -28,7 +28,8 @@ endpoints:
     path: /users
     auth: [admin]
     input: [email, name, role, org_id]
-    hooks: [validate_org]
+    controller:
+      before: validate_org
     events: [user.created]
     jobs: [send_welcome_email]
 

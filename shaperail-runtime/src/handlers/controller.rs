@@ -1,0 +1,210 @@
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
+use shaperail_core::ShaperailError;
+
+use crate::auth::extractor::AuthenticatedUser;
+
+/// Context passed to controller functions for synchronous in-request business logic.
+///
+/// Controllers receive a mutable `Context` and can:
+/// - Modify `input` before the DB operation (before-controllers)
+/// - Read/modify `data` after the DB operation (after-controllers)
+/// - Return `Err(...)` to halt the request with an error response
+///
+/// # Example
+/// ```rust,ignore
+/// pub async fn validate_org(ctx: &mut Context) -> Result<(), ShaperailError> {
+///     if let Some(email) = ctx.input.get("email").and_then(|v| v.as_str()) {
+///         ctx.input["email"] = serde_json::json!(email.to_lowercase());
+///     }
+///     Ok(())
+/// }
+/// ```
+pub struct Context {
+    /// Mutable input data. Before-controllers can modify what gets written to DB.
+    pub input: serde_json::Map<String, serde_json::Value>,
+    /// DB result data. `None` in before-controllers, `Some(...)` in after-controllers.
+    pub data: Option<serde_json::Value>,
+    /// The authenticated user, if present.
+    pub user: Option<AuthenticatedUser>,
+    /// Database pool for custom queries within the controller.
+    pub pool: sqlx::PgPool,
+    /// Request headers (read-only).
+    pub headers: HashMap<String, String>,
+    /// Extra response headers the controller wants to add.
+    pub response_headers: Vec<(String, String)>,
+}
+
+/// Type alias for controller function results.
+pub type ControllerResult = Result<(), ShaperailError>;
+
+/// Trait for controller functions that can be stored in the registry.
+pub trait ControllerHandler: Send + Sync {
+    fn call<'a>(
+        &'a self,
+        ctx: &'a mut Context,
+    ) -> Pin<Box<dyn Future<Output = ControllerResult> + Send + 'a>>;
+}
+
+/// Blanket implementation for named async functions that take `&mut Context`.
+///
+/// Use named async functions (not closures) for controller registration:
+///
+/// ```rust,ignore
+/// async fn normalize_email(ctx: &mut Context) -> ControllerResult {
+///     // modify ctx.input...
+///     Ok(())
+/// }
+/// map.register("users", "normalize_email", normalize_email);
+/// ```
+impl<F> ControllerHandler for F
+where
+    F: for<'a> AsyncControllerFn<'a> + Send + Sync,
+{
+    fn call<'a>(
+        &'a self,
+        ctx: &'a mut Context,
+    ) -> Pin<Box<dyn Future<Output = ControllerResult> + Send + 'a>> {
+        Box::pin(self.call_async(ctx))
+    }
+}
+
+/// Helper trait to express the async function signature with proper lifetimes.
+pub trait AsyncControllerFn<'a> {
+    type Fut: Future<Output = ControllerResult> + Send + 'a;
+    fn call_async(&self, ctx: &'a mut Context) -> Self::Fut;
+}
+
+impl<'a, F, Fut> AsyncControllerFn<'a> for F
+where
+    F: Fn(&'a mut Context) -> Fut + Send + Sync,
+    Fut: Future<Output = ControllerResult> + Send + 'a,
+{
+    type Fut = Fut;
+    fn call_async(&self, ctx: &'a mut Context) -> Self::Fut {
+        (self)(ctx)
+    }
+}
+
+/// Registry that maps (resource_name, function_name) to controller functions.
+///
+/// Follows the same pattern as `StoreRegistry` — generated code populates this
+/// at startup, and handlers look up controllers by name at request time.
+pub struct ControllerMap {
+    fns: HashMap<(String, String), Arc<dyn ControllerHandler>>,
+}
+
+impl ControllerMap {
+    /// Creates an empty controller registry.
+    pub fn new() -> Self {
+        Self {
+            fns: HashMap::new(),
+        }
+    }
+
+    /// Registers a controller function for a resource.
+    pub fn register<F>(&mut self, resource: &str, name: &str, f: F)
+    where
+        F: ControllerHandler + 'static,
+    {
+        self.fns
+            .insert((resource.to_string(), name.to_string()), Arc::new(f));
+    }
+
+    /// Calls a controller function by resource and name.
+    ///
+    /// Returns `Ok(())` if no controller is registered for this (resource, name) pair.
+    pub async fn call(&self, resource: &str, name: &str, ctx: &mut Context) -> ControllerResult {
+        if let Some(f) = self.fns.get(&(resource.to_string(), name.to_string())) {
+            f.call(ctx).await
+        } else {
+            Err(ShaperailError::Internal(format!(
+                "Controller '{name}' not found for resource '{resource}'. \
+                 Ensure the function exists in resources/{resource}.controller.rs"
+            )))
+        }
+    }
+
+    /// Returns true if a controller is registered for this (resource, name) pair.
+    pub fn has(&self, resource: &str, name: &str) -> bool {
+        self.fns
+            .contains_key(&(resource.to_string(), name.to_string()))
+    }
+}
+
+impl Default for ControllerMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn normalize_email(ctx: &mut Context) -> ControllerResult {
+        if let Some(email) = ctx.input.get("email").and_then(|v| v.as_str()) {
+            let lower = email.to_lowercase();
+            ctx.input["email"] = serde_json::json!(lower);
+        }
+        Ok(())
+    }
+
+    async fn noop(_ctx: &mut Context) -> ControllerResult {
+        Ok(())
+    }
+
+    fn test_pool() -> sqlx::PgPool {
+        sqlx::PgPool::connect_lazy("postgres://localhost/test").unwrap()
+    }
+
+    #[tokio::test]
+    async fn controller_map_register_and_call() {
+        let mut map = ControllerMap::new();
+        map.register("users", "normalize_email", normalize_email);
+
+        let mut input = serde_json::Map::new();
+        input.insert("email".to_string(), serde_json::json!("USER@EXAMPLE.COM"));
+
+        let mut ctx = Context {
+            input,
+            data: None,
+            user: None,
+            pool: test_pool(),
+            headers: HashMap::new(),
+            response_headers: vec![],
+        };
+
+        map.call("users", "normalize_email", &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(ctx.input["email"], serde_json::json!("user@example.com"));
+    }
+
+    #[tokio::test]
+    async fn controller_map_missing_returns_error() {
+        let map = ControllerMap::new();
+        let mut ctx = Context {
+            input: serde_json::Map::new(),
+            data: None,
+            user: None,
+            pool: test_pool(),
+            headers: HashMap::new(),
+            response_headers: vec![],
+        };
+
+        let result = map.call("users", "nonexistent", &mut ctx).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn controller_map_has() {
+        let mut map = ControllerMap::new();
+        assert!(!map.has("users", "check"));
+        map.register("users", "check", noop);
+        assert!(map.has("users", "check"));
+    }
+}

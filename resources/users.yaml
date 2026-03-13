@@ -38,7 +38,8 @@ endpoints:
     path: /users
     auth: [admin]
     input: [email, name, role, org_id]
-    hooks: [validate_org]
+    controller:
+      before: validate_org
     events: [user.created]
     jobs: [send_welcome_email]
 
@@ -53,7 +54,8 @@ endpoints:
     method: DELETE
     path: /users/:id
     auth: [admin]
-    hooks: [cleanup_user_data]
+    controller:
+      before: cleanup_user_data
     events: [user.deleted]
     soft_delete: true
 

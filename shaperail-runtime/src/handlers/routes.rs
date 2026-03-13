@@ -23,8 +23,12 @@ pub fn register_resource(
             let ep_arc = Arc::new(endpoint.clone());
             let res = resource_arc.clone();
 
-            // Convert PRD path (/users/:id) to Actix path (/users/{id})
-            let actix_path = endpoint.path.replace(":id", "{id}");
+            // Convert PRD path (/users/:id) to Actix path (/v1/users/{id})
+            let actix_path = format!(
+                "/v{}{}",
+                resource.version,
+                endpoint.path.replace(":id", "{id}")
+            );
 
             match action.as_str() {
                 "list" => {
