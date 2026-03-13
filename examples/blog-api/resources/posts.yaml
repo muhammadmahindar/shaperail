@@ -32,6 +32,8 @@ endpoints:
     path: /posts
     auth: [admin, member]
     input: [title, slug, body, status, created_by, published_at]
+    controller:
+      before: set_created_by
 
   update:
     method: PATCH

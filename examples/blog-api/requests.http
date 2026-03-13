@@ -1,11 +1,11 @@
 ### Public list of posts
-GET http://localhost:3000/posts
+GET http://localhost:3000/v1/posts
 
 ### Public single post
-GET http://localhost:3000/posts/00000000-0000-0000-0000-000000000000
+GET http://localhost:3000/v1/posts/00000000-0000-0000-0000-000000000000
 
 ### Create a post (requires JWT or API key auth)
-POST http://localhost:3000/posts
+POST http://localhost:3000/v1/posts
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -19,10 +19,10 @@ Content-Type: application/json
 }
 
 ### List comments for a post
-GET http://localhost:3000/comments?filter[post_id]=00000000-0000-0000-0000-000000000000
+GET http://localhost:3000/v1/comments?filter[post_id]=00000000-0000-0000-0000-000000000000
 
 ### Create a comment (requires JWT or API key auth)
-POST http://localhost:3000/comments
+POST http://localhost:3000/v1/comments
 Authorization: Bearer <token>
 Content-Type: application/json
 
