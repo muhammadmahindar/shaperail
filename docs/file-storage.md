@@ -53,6 +53,9 @@ endpoints:
 | `max_size` | Yes | Maximum upload size. Accepts `kb`, `mb`, `gb`, or plain bytes (e.g., `5mb`, `100kb`, `1gb`, `1024`). |
 | `types` | No | Allowed file types. Accepts extensions (`jpg`, `png`, `pdf`), full MIME types (`image/png`, `application/pdf`), or wildcards (`image/*`). Omit to allow all types. |
 
+Upload endpoints accept `multipart/form-data`. Text inputs are read from text
+parts, and the file part must use the field named in `upload.field`.
+
 When a request exceeds `max_size` or sends a disallowed MIME type, Shaperail
 returns a `422 Validation` error with a structured `FieldError` identifying the
 problem.
@@ -130,7 +133,7 @@ The `expires_secs` parameter controls how long the URL remains valid.
 
 ## File metadata in the database
 
-Every uploaded file produces a `FileMetadata` record with four fields:
+Every uploaded file produces a `FileMetadata` record with four values:
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -139,8 +142,21 @@ Every uploaded file produces a `FileMetadata` record with four fields:
 | `mime_type` | `String` | Detected MIME type (e.g., `image/png`). |
 | `size` | `u64` | File size in bytes. |
 
-The `path` value is what gets stored in the schema field marked `type: file`.
-Use it to generate signed URLs or perform storage operations later.
+The `type: file` schema field stores the storage `path`. If you also want the
+other metadata persisted with the resource record, declare explicit companion
+fields using the same base name:
+
+```yaml
+schema:
+  attachment:           { type: file, required: true }
+  attachment_filename:  { type: string }
+  attachment_mime_type: { type: string }
+  attachment_size:      { type: bigint }
+```
+
+When those fields exist, Shaperail fills them automatically during upload.
+This keeps the schema explicit while still persisting the full file metadata
+with the resource record.
 
 Filenames are sanitized on upload: only alphanumeric characters, dots, hyphens,
 and underscores are kept. Everything else is replaced with `_`. Directory

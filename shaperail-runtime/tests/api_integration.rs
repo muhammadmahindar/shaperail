@@ -6,17 +6,25 @@
 //!
 //! Run with: cargo test -p shaperail-runtime --test api_integration
 
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, OnceLock};
 
 use actix_web::{test as actix_test, web, App};
+use deadpool_redis::Pool;
 use indexmap::IndexMap;
+use redis::AsyncCommands;
 use serde_json::json;
 use shaperail_core::{
-    AuthRule, EndpointSpec, FieldSchema, FieldType, HttpMethod, PaginationStyle, ResourceDefinition,
+    AuthRule, CacheSpec, EndpointSpec, FieldSchema, FieldType, HttpMethod, PaginationStyle,
+    ResourceDefinition,
 };
 use shaperail_runtime::auth::jwt::JwtConfig;
+use shaperail_runtime::cache::{create_redis_pool, RedisCache};
 use shaperail_runtime::handlers::crud::AppState;
 use shaperail_runtime::handlers::routes::register_resource;
+use shaperail_runtime::observability::{metrics_handler, MetricsState, RequestLogger};
+use sqlx::Row;
+use tempfile::TempDir;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -36,7 +44,284 @@ fn make_state(pool: sqlx::PgPool, jwt: Option<JwtConfig>) -> Arc<AppState> {
         cache: None,
         event_emitter: None,
         job_queue: None,
+        metrics: Some(MetricsState::new().expect("metrics state")),
     })
+}
+
+fn redis_url() -> String {
+    std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string())
+}
+
+fn redis_test_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+fn storage_test_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+async fn clear_resource_cache(pool: &Pool, resource: &str) {
+    let mut conn = pool.get().await.expect("redis connection");
+    let keys: Vec<String> = redis::cmd("KEYS")
+        .arg(format!("shaperail:{resource}:*"))
+        .query_async(&mut conn)
+        .await
+        .unwrap_or_default();
+
+    if !keys.is_empty() {
+        let _: usize = conn.del(keys).await.expect("delete cache keys");
+    }
+}
+
+fn test_asset_resource() -> ResourceDefinition {
+    let mut schema = IndexMap::new();
+    schema.insert(
+        "id".to_string(),
+        FieldSchema {
+            field_type: FieldType::Uuid,
+            primary: true,
+            generated: true,
+            required: false,
+            unique: false,
+            nullable: false,
+            reference: None,
+            min: None,
+            max: None,
+            format: None,
+            values: None,
+            default: None,
+            sensitive: false,
+            search: false,
+            items: None,
+        },
+    );
+    schema.insert(
+        "title".to_string(),
+        FieldSchema {
+            field_type: FieldType::String,
+            primary: false,
+            generated: false,
+            required: true,
+            unique: false,
+            nullable: false,
+            reference: None,
+            min: Some(json!(1)),
+            max: Some(json!(200)),
+            format: None,
+            values: None,
+            default: None,
+            sensitive: false,
+            search: false,
+            items: None,
+        },
+    );
+    schema.insert(
+        "attachment".to_string(),
+        FieldSchema {
+            field_type: FieldType::File,
+            primary: false,
+            generated: false,
+            required: true,
+            unique: false,
+            nullable: false,
+            reference: None,
+            min: None,
+            max: None,
+            format: None,
+            values: None,
+            default: None,
+            sensitive: false,
+            search: false,
+            items: None,
+        },
+    );
+    schema.insert(
+        "attachment_filename".to_string(),
+        FieldSchema {
+            field_type: FieldType::String,
+            primary: false,
+            generated: false,
+            required: false,
+            unique: false,
+            nullable: true,
+            reference: None,
+            min: None,
+            max: None,
+            format: None,
+            values: None,
+            default: None,
+            sensitive: false,
+            search: false,
+            items: None,
+        },
+    );
+    schema.insert(
+        "attachment_mime_type".to_string(),
+        FieldSchema {
+            field_type: FieldType::String,
+            primary: false,
+            generated: false,
+            required: false,
+            unique: false,
+            nullable: true,
+            reference: None,
+            min: None,
+            max: None,
+            format: None,
+            values: None,
+            default: None,
+            sensitive: false,
+            search: false,
+            items: None,
+        },
+    );
+    schema.insert(
+        "attachment_size".to_string(),
+        FieldSchema {
+            field_type: FieldType::Bigint,
+            primary: false,
+            generated: false,
+            required: false,
+            unique: false,
+            nullable: true,
+            reference: None,
+            min: None,
+            max: None,
+            format: None,
+            values: None,
+            default: None,
+            sensitive: false,
+            search: false,
+            items: None,
+        },
+    );
+    schema.insert(
+        "created_at".to_string(),
+        FieldSchema {
+            field_type: FieldType::Timestamp,
+            primary: false,
+            generated: true,
+            required: false,
+            unique: false,
+            nullable: false,
+            reference: None,
+            min: None,
+            max: None,
+            format: None,
+            values: None,
+            default: None,
+            sensitive: false,
+            search: false,
+            items: None,
+        },
+    );
+    schema.insert(
+        "updated_at".to_string(),
+        FieldSchema {
+            field_type: FieldType::Timestamp,
+            primary: false,
+            generated: true,
+            required: false,
+            unique: false,
+            nullable: false,
+            reference: None,
+            min: None,
+            max: None,
+            format: None,
+            values: None,
+            default: None,
+            sensitive: false,
+            search: false,
+            items: None,
+        },
+    );
+
+    let mut endpoints = IndexMap::new();
+    endpoints.insert(
+        "create".to_string(),
+        EndpointSpec {
+            method: HttpMethod::Post,
+            path: "/test_assets".to_string(),
+            auth: None,
+            input: Some(vec!["title".to_string(), "attachment".to_string()]),
+            filters: None,
+            search: None,
+            pagination: None,
+            sort: None,
+            cache: None,
+            hooks: None,
+            events: None,
+            jobs: None,
+            upload: Some(shaperail_core::UploadSpec {
+                field: "attachment".to_string(),
+                storage: "local".to_string(),
+                max_size: "1mb".to_string(),
+                types: Some(vec!["text/plain".to_string()]),
+            }),
+            soft_delete: false,
+        },
+    );
+    endpoints.insert(
+        "delete".to_string(),
+        EndpointSpec {
+            method: HttpMethod::Delete,
+            path: "/test_assets/:id".to_string(),
+            auth: None,
+            input: None,
+            filters: None,
+            search: None,
+            pagination: None,
+            sort: None,
+            cache: None,
+            hooks: None,
+            events: None,
+            jobs: None,
+            upload: None,
+            soft_delete: false,
+        },
+    );
+
+    ResourceDefinition {
+        resource: "test_assets".to_string(),
+        version: 1,
+        schema,
+        endpoints: Some(endpoints),
+        relations: None,
+        indexes: None,
+    }
+}
+
+fn multipart_body(
+    fields: &[(&str, &str)],
+    file_field: &str,
+    filename: &str,
+    mime_type: &str,
+    bytes: &[u8],
+) -> (String, Vec<u8>) {
+    let boundary = "shaperail-boundary";
+    let mut body = Vec::new();
+
+    for (name, value) in fields {
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            )
+            .as_bytes(),
+        );
+    }
+
+    body.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"{file_field}\"; filename=\"{filename}\"\r\nContent-Type: {mime_type}\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(bytes);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+    (boundary.to_string(), body)
 }
 
 /// Returns a full `ResourceDefinition` matching the test_users migration.
@@ -888,4 +1173,447 @@ async fn test_field_selection(pool: sqlx::PgPool) {
             "Should not include non-selected field 'role'"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// 11. Metrics wiring
+// ---------------------------------------------------------------------------
+
+#[sqlx::test(migrations = "tests/fixtures/migrations")]
+async fn test_metrics_capture_requests_errors_and_cache(pool: sqlx::PgPool) {
+    let _redis_guard = redis_test_lock().lock().await;
+    let redis_pool = Arc::new(create_redis_pool(&redis_url()).expect("redis pool"));
+    clear_resource_cache(&redis_pool, "test_users").await;
+
+    let mut resource = test_resource();
+    let mut endpoints = full_crud_endpoints();
+    endpoints.get_mut("list").unwrap().cache = Some(CacheSpec {
+        ttl: 60,
+        invalidate_on: None,
+    });
+    resource.endpoints = Some(endpoints);
+
+    let metrics_state = web::Data::new(MetricsState::new().expect("metrics state"));
+    let state = Arc::new(AppState {
+        pool: pool.clone(),
+        resources: vec![],
+        jwt_config: None,
+        cache: Some(RedisCache::new(redis_pool.clone())),
+        event_emitter: None,
+        job_queue: None,
+        metrics: Some(metrics_state.get_ref().clone()),
+    });
+
+    let app = actix_test::init_service(
+        App::new()
+            .wrap(RequestLogger::new(HashSet::new()))
+            .app_data(web::Data::new(state.clone()))
+            .app_data(metrics_state.clone())
+            .route("/metrics", web::get().to(metrics_handler))
+            .configure(|cfg| register_resource(cfg, &resource, state.clone())),
+    )
+    .await;
+
+    let org_id = uuid::Uuid::new_v4().to_string();
+    let req = actix_test::TestRequest::post()
+        .uri("/test_users")
+        .set_json(user_payload(
+            "metrics@example.com",
+            "Metrics User",
+            "admin",
+            &org_id,
+        ))
+        .to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 201);
+
+    let req = actix_test::TestRequest::get()
+        .uri(&format!("/test_users?filter%5Borg_id%5D={org_id}"))
+        .to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.headers().get("X-Cache").unwrap(), "MISS");
+
+    let req = actix_test::TestRequest::get()
+        .uri(&format!("/test_users?filter%5Borg_id%5D={org_id}"))
+        .to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.headers().get("X-Cache").unwrap(), "HIT");
+
+    let missing_id = uuid::Uuid::new_v4();
+    let req = actix_test::TestRequest::get()
+        .uri(&format!("/test_users/{missing_id}"))
+        .to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 404);
+
+    let req = actix_test::TestRequest::get().uri("/metrics").to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let body = actix_test::read_body(resp).await;
+    let output = String::from_utf8(body.to_vec()).expect("utf8 metrics");
+
+    assert!(output.contains("shaperail_http_requests_total"));
+    assert!(output.contains("shaperail_http_request_duration_seconds"));
+    assert!(output.contains(r#"shaperail_cache_total{result="hit"} 1"#));
+    assert!(output.contains(r#"shaperail_cache_total{result="miss"} 1"#));
+    assert!(output.contains(r#"shaperail_errors_total{error_type="http_404"} 1"#));
+    assert!(output.contains("shaperail_db_pool_size"));
+    assert!(output.contains("shaperail_job_queue_depth"));
+}
+
+// ---------------------------------------------------------------------------
+// 12. Redis cache integration
+// ---------------------------------------------------------------------------
+
+#[sqlx::test(migrations = "tests/fixtures/migrations")]
+async fn test_list_cache_hit_serves_stale_data_after_db_delete(pool: sqlx::PgPool) {
+    let _redis_guard = redis_test_lock().lock().await;
+    let redis_pool = Arc::new(create_redis_pool(&redis_url()).expect("redis pool"));
+    clear_resource_cache(&redis_pool, "test_users").await;
+
+    let mut resource = test_resource();
+    let mut endpoints = full_crud_endpoints();
+    endpoints.get_mut("list").unwrap().cache = Some(CacheSpec {
+        ttl: 60,
+        invalidate_on: None,
+    });
+    resource.endpoints = Some(endpoints);
+
+    let metrics_state = web::Data::new(MetricsState::new().expect("metrics state"));
+    let state = Arc::new(AppState {
+        pool: pool.clone(),
+        resources: vec![],
+        jwt_config: None,
+        cache: Some(RedisCache::new(redis_pool.clone())),
+        event_emitter: None,
+        job_queue: None,
+        metrics: Some(metrics_state.get_ref().clone()),
+    });
+
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(state.clone()))
+            .app_data(metrics_state.clone())
+            .configure(|cfg| register_resource(cfg, &resource, state.clone())),
+    )
+    .await;
+
+    let org_id = uuid::Uuid::new_v4().to_string();
+    let req = actix_test::TestRequest::post()
+        .uri("/test_users")
+        .set_json(user_payload(
+            "cache-hit@example.com",
+            "Cached User",
+            "admin",
+            &org_id,
+        ))
+        .to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 201);
+
+    let list_uri = format!("/test_users?filter%5Borg_id%5D={org_id}");
+
+    let req = actix_test::TestRequest::get().uri(&list_uri).to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.headers().get("X-Cache").unwrap(), "MISS");
+    let body: serde_json::Value = actix_test::read_body_json(resp).await;
+    assert_eq!(body["data"].as_array().unwrap().len(), 1);
+
+    sqlx::query("DELETE FROM test_users WHERE org_id = $1")
+        .bind(uuid::Uuid::parse_str(&org_id).expect("org id uuid"))
+        .execute(&pool)
+        .await
+        .expect("delete rows");
+
+    let req = actix_test::TestRequest::get().uri(&list_uri).to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.headers().get("X-Cache").unwrap(), "HIT");
+    let body: serde_json::Value = actix_test::read_body_json(resp).await;
+    let data = body["data"].as_array().expect("data array");
+    assert_eq!(
+        data.len(),
+        1,
+        "cached list should still contain deleted row"
+    );
+}
+
+#[sqlx::test(migrations = "tests/fixtures/migrations")]
+async fn test_write_invalidates_cached_list(pool: sqlx::PgPool) {
+    let _redis_guard = redis_test_lock().lock().await;
+    let redis_pool = Arc::new(create_redis_pool(&redis_url()).expect("redis pool"));
+    clear_resource_cache(&redis_pool, "test_users").await;
+
+    let mut resource = test_resource();
+    let mut endpoints = full_crud_endpoints();
+    endpoints.get_mut("list").unwrap().cache = Some(CacheSpec {
+        ttl: 60,
+        invalidate_on: None,
+    });
+    resource.endpoints = Some(endpoints);
+
+    let state = Arc::new(AppState {
+        pool: pool.clone(),
+        resources: vec![],
+        jwt_config: None,
+        cache: Some(RedisCache::new(redis_pool.clone())),
+        event_emitter: None,
+        job_queue: None,
+        metrics: Some(MetricsState::new().expect("metrics state")),
+    });
+
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(state.clone()))
+            .configure(|cfg| register_resource(cfg, &resource, state.clone())),
+    )
+    .await;
+
+    let org_id = uuid::Uuid::new_v4().to_string();
+
+    for email in ["invalidate-1@example.com", "invalidate-2@example.com"] {
+        let req = actix_test::TestRequest::post()
+            .uri("/test_users")
+            .set_json(user_payload(email, "Invalidate User", "admin", &org_id))
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 201);
+    }
+
+    let list_uri = format!("/test_users?filter%5Borg_id%5D={org_id}");
+
+    let req = actix_test::TestRequest::get().uri(&list_uri).to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.headers().get("X-Cache").unwrap(), "MISS");
+
+    let req = actix_test::TestRequest::get().uri(&list_uri).to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.headers().get("X-Cache").unwrap(), "HIT");
+
+    let req = actix_test::TestRequest::post()
+        .uri("/test_users")
+        .set_json(user_payload(
+            "invalidate-3@example.com",
+            "Invalidate User",
+            "admin",
+            &org_id,
+        ))
+        .to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 201);
+
+    let req = actix_test::TestRequest::get().uri(&list_uri).to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.headers().get("X-Cache").unwrap(), "MISS");
+    let body: serde_json::Value = actix_test::read_body_json(resp).await;
+    assert_eq!(body["data"].as_array().unwrap().len(), 3);
+}
+
+#[sqlx::test(migrations = "tests/fixtures/migrations")]
+async fn test_nocache_bypasses_cached_response(pool: sqlx::PgPool) {
+    let _redis_guard = redis_test_lock().lock().await;
+    let redis_pool = Arc::new(create_redis_pool(&redis_url()).expect("redis pool"));
+    clear_resource_cache(&redis_pool, "test_users").await;
+
+    let mut resource = test_resource();
+    let mut endpoints = full_crud_endpoints();
+    endpoints.get_mut("list").unwrap().cache = Some(CacheSpec {
+        ttl: 60,
+        invalidate_on: None,
+    });
+    resource.endpoints = Some(endpoints);
+
+    let state = Arc::new(AppState {
+        pool: pool.clone(),
+        resources: vec![],
+        jwt_config: None,
+        cache: Some(RedisCache::new(redis_pool.clone())),
+        event_emitter: None,
+        job_queue: None,
+        metrics: Some(MetricsState::new().expect("metrics state")),
+    });
+
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(state.clone()))
+            .configure(|cfg| register_resource(cfg, &resource, state.clone())),
+    )
+    .await;
+
+    let org_id = uuid::Uuid::new_v4().to_string();
+    let req = actix_test::TestRequest::post()
+        .uri("/test_users")
+        .set_json(user_payload(
+            "bypass@example.com",
+            "Bypass User",
+            "admin",
+            &org_id,
+        ))
+        .to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 201);
+
+    let list_uri = format!("/test_users?filter%5Borg_id%5D={org_id}");
+    let req = actix_test::TestRequest::get().uri(&list_uri).to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.headers().get("X-Cache").unwrap(), "MISS");
+
+    sqlx::query("DELETE FROM test_users WHERE org_id = $1")
+        .bind(uuid::Uuid::parse_str(&org_id).expect("org id uuid"))
+        .execute(&pool)
+        .await
+        .expect("delete rows");
+
+    let req = actix_test::TestRequest::get()
+        .uri(&format!("{list_uri}&nocache=1"))
+        .to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    assert!(
+        !resp.headers().contains_key("X-Cache"),
+        "bypass should skip cache headers"
+    );
+    let body: serde_json::Value = actix_test::read_body_json(resp).await;
+    assert!(body["data"].as_array().unwrap().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// 13. File upload endpoints
+// ---------------------------------------------------------------------------
+
+#[sqlx::test(migrations = "tests/fixtures/migrations")]
+async fn test_upload_endpoint_persists_file_path_and_metadata(pool: sqlx::PgPool) {
+    let _storage_guard = storage_test_lock().lock().await;
+    let storage_dir = TempDir::new().expect("temp storage dir");
+    std::env::set_var(
+        "SHAPERAIL_STORAGE_LOCAL_DIR",
+        storage_dir.path().display().to_string(),
+    );
+
+    let resource = test_asset_resource();
+    let state = make_state(pool.clone(), None);
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(state.clone()))
+            .configure(|cfg| register_resource(cfg, &resource, state.clone())),
+    )
+    .await;
+
+    let (boundary, body) = multipart_body(
+        &[("title", "Quarterly report")],
+        "attachment",
+        "report.txt",
+        "text/plain",
+        b"hello world",
+    );
+
+    let req = actix_test::TestRequest::post()
+        .uri("/test_assets")
+        .insert_header((
+            "content-type",
+            format!("multipart/form-data; boundary={boundary}"),
+        ))
+        .set_payload(body)
+        .to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 201);
+    let body: serde_json::Value = actix_test::read_body_json(resp).await;
+    let data = body["data"].as_object().expect("created asset");
+
+    let path = data["attachment"].as_str().expect("attachment path");
+    assert!(path.starts_with("test_assets/attachment/"));
+    assert_eq!(data["attachment_filename"], "report.txt");
+    assert_eq!(data["attachment_mime_type"], "text/plain");
+    assert_eq!(data["attachment_size"], 11);
+
+    let stored_path = storage_dir.path().join(path);
+    assert!(stored_path.exists(), "uploaded file should exist on disk");
+
+    let row = sqlx::query(
+        r#"
+        SELECT attachment, attachment_filename, attachment_mime_type, attachment_size
+        FROM test_assets
+        LIMIT 1
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("fetch stored asset");
+
+    assert_eq!(row.get::<String, _>("attachment"), path);
+    assert_eq!(row.get::<String, _>("attachment_filename"), "report.txt");
+    assert_eq!(row.get::<String, _>("attachment_mime_type"), "text/plain");
+    assert_eq!(row.get::<i64, _>("attachment_size"), 11);
+
+    std::env::remove_var("SHAPERAIL_STORAGE_LOCAL_DIR");
+}
+
+#[sqlx::test(migrations = "tests/fixtures/migrations")]
+async fn test_delete_endpoint_cleans_up_uploaded_file(pool: sqlx::PgPool) {
+    let _storage_guard = storage_test_lock().lock().await;
+    let storage_dir = TempDir::new().expect("temp storage dir");
+    std::env::set_var(
+        "SHAPERAIL_STORAGE_LOCAL_DIR",
+        storage_dir.path().display().to_string(),
+    );
+
+    let resource = test_asset_resource();
+    let state = make_state(pool.clone(), None);
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(state.clone()))
+            .configure(|cfg| register_resource(cfg, &resource, state.clone())),
+    )
+    .await;
+
+    let (boundary, body) = multipart_body(
+        &[("title", "Delete me")],
+        "attachment",
+        "delete-me.txt",
+        "text/plain",
+        b"cleanup",
+    );
+
+    let req = actix_test::TestRequest::post()
+        .uri("/test_assets")
+        .insert_header((
+            "content-type",
+            format!("multipart/form-data; boundary={boundary}"),
+        ))
+        .set_payload(body)
+        .to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 201);
+    let body: serde_json::Value = actix_test::read_body_json(resp).await;
+    let data = body["data"].as_object().expect("created asset");
+    let id = data["id"].as_str().expect("asset id").to_string();
+    let path = data["attachment"].as_str().expect("attachment path").to_string();
+    let stored_path = storage_dir.path().join(&path);
+    assert!(stored_path.exists(), "uploaded file should exist before delete");
+
+    let req = actix_test::TestRequest::delete()
+        .uri(&format!("/test_assets/{id}"))
+        .to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 204);
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if !stored_path.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("file cleanup should finish");
+
+    std::env::remove_var("SHAPERAIL_STORAGE_LOCAL_DIR");
 }

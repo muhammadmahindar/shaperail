@@ -134,7 +134,8 @@ use shaperail_runtime::events::EventEmitter;
 use shaperail_runtime::handlers::{register_all_resources, AppState};
 use shaperail_runtime::jobs::JobQueue;
 use shaperail_runtime::observability::{
-    health_handler, health_ready_handler, metrics_handler, HealthState, MetricsState,
+    health_handler, health_ready_handler, metrics_handler, sensitive_fields, HealthState,
+    MetricsState, RequestLogger,
 };
 
 fn io_error(message: impl Into<String>) -> io::Error {
@@ -969,6 +970,9 @@ async fn main() -> std::io::Result<()> {
         .and_then(|p| p.parse().ok())
         .unwrap_or(config.port);
 
+    let metrics_state = web::Data::new(
+        MetricsState::new().map_err(|e| io_error(format!("Failed to initialize metrics: {e}")))?,
+    );
     let state = Arc::new(AppState {
         pool: pool.clone(),
         resources: resources.clone(),
@@ -976,11 +980,9 @@ async fn main() -> std::io::Result<()> {
         cache,
         event_emitter,
         job_queue,
+        metrics: Some(metrics_state.get_ref().clone()),
     });
     let health_state = web::Data::new(HealthState::new(Some(pool), redis_pool));
-    let metrics_state = web::Data::new(
-        MetricsState::new().map_err(|e| io_error(format!("Failed to initialize metrics: {e}")))?,
-    );
 
     tracing::info!("Starting Shaperail server on port {port}");
     tracing::info!("OpenAPI spec available at http://localhost:{port}/openapi.json");
@@ -997,7 +999,9 @@ async fn main() -> std::io::Result<()> {
         let st = state_clone.clone();
         let res = resources_clone.clone();
         let spec = openapi_json_clone.clone();
+        let sensitive = sensitive_fields(&res);
         let mut app = App::new()
+            .wrap(RequestLogger::new(sensitive))
             .app_data(web::Data::new(st.clone()))
             .app_data(web::Data::new(spec))
             .app_data(health_state_clone.clone())

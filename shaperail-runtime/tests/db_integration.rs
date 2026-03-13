@@ -15,6 +15,7 @@ use shaperail_runtime::db::{
     health_check, FilterParam, FilterSet, PageRequest, ResourceQuery, SortParam,
 };
 use shaperail_runtime::handlers::crud::{handle_delete, AppState};
+use shaperail_runtime::observability::MetricsState;
 
 fn test_resource() -> ResourceDefinition {
     let mut schema = IndexMap::new();
@@ -363,6 +364,7 @@ async fn test_handle_delete_soft_delete_returns_no_content(pool: sqlx::PgPool) {
         cache: None,
         event_emitter: None,
         job_queue: None,
+        metrics: Some(MetricsState::new().expect("metrics state")),
     });
 
     let response = handle_delete(

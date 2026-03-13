@@ -5,7 +5,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use actix_web::dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform};
+use actix_web::web;
 use actix_web::Error;
+
+use super::metrics::MetricsState;
 
 /// Actix-web middleware that logs every request/response as a single structured JSON line.
 ///
@@ -64,6 +67,7 @@ where
         let method = req.method().to_string();
         let path = req.path().to_string();
         let request_id = uuid::Uuid::new_v4().to_string();
+        let metrics = req.app_data::<web::Data<MetricsState>>().cloned();
 
         // Extract user_id from request extensions if auth middleware has run
         let user_id = req
@@ -85,7 +89,15 @@ where
             let res = fut.await?;
 
             let status = res.status().as_u16();
-            let duration_ms = start.elapsed().as_millis() as u64;
+            let duration = start.elapsed();
+            let duration_ms = duration.as_millis() as u64;
+
+            if let Some(metrics) = metrics {
+                metrics.record_request(&method, &path, status, duration.as_secs_f64());
+                if status >= 400 {
+                    metrics.record_error(&format!("http_{status}"));
+                }
+            }
 
             tracing::info!(
                 request_id = %request_id,

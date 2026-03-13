@@ -26,6 +26,7 @@ tokio = { workspace = true }
 anyhow = { workspace = true }
 indexmap = { workspace = true }
 redis = { workspace = true }
+deadpool-redis = { workspace = true }
 sqlx = { workspace = true }
 
 [dev-dependencies]

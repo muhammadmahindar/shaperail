@@ -148,7 +148,8 @@ fn jobs_status_help() {
         .args(["jobs:status", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("job queue"));
+        .stdout(predicate::str::contains("job queue"))
+        .stdout(predicate::str::contains("[JOB_ID]"));
 }
 
 // --- Init tests ---

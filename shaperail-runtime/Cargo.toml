@@ -14,6 +14,7 @@ categories.workspace = true
 shaperail-core = { version = "0.2.2", path = "../shaperail-core" }
 actix-web = { workspace = true }
 actix-ws = { workspace = true }
+actix-multipart = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

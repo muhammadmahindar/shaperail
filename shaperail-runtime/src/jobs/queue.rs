@@ -229,6 +229,29 @@ impl JobQueue {
         })
     }
 
+    /// Returns the total number of queued jobs across all priority levels.
+    pub async fn total_depth(&self) -> Result<i64, ShaperailError> {
+        let mut conn = self
+            .pool
+            .get()
+            .await
+            .map_err(|e| ShaperailError::Internal(format!("Redis connection failed: {e}")))?;
+
+        let mut total = 0_i64;
+        for priority in JobPriority::all() {
+            let len: i64 = redis::cmd("LLEN")
+                .arg(priority.queue_key())
+                .query_async(&mut *conn)
+                .await
+                .map_err(|e| {
+                    ShaperailError::Internal(format!("Failed to inspect job queue depth: {e}"))
+                })?;
+            total += len;
+        }
+
+        Ok(total)
+    }
+
     /// Updates a job's status in the metadata hash.
     pub(crate) async fn update_status(
         &self,

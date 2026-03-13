@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
+use actix_multipart::Multipart;
 use actix_web::{web, HttpRequest, HttpResponse};
-use shaperail_core::{EndpointSpec, FieldError, ResourceDefinition, ShaperailError};
+use futures_util::TryStreamExt;
+use shaperail_core::{EndpointSpec, FieldError, FieldType, ResourceDefinition, ShaperailError};
 
 use crate::auth::extractor::{try_extract_auth, AuthenticatedUser};
 use crate::auth::jwt::JwtConfig;
@@ -10,6 +12,8 @@ use crate::cache::RedisCache;
 use crate::db::ResourceQuery;
 use crate::events::EventEmitter;
 use crate::jobs::{JobPriority, JobQueue};
+use crate::observability::MetricsState;
+use crate::storage::{parse_max_size, FileMetadata, StorageBackend, UploadHandler};
 
 use super::params::{parse_item_params, parse_list_params, query_map_public};
 use super::relations::load_relations;
@@ -24,6 +28,7 @@ pub struct AppState {
     pub cache: Option<RedisCache>,
     pub event_emitter: Option<EventEmitter>,
     pub job_queue: Option<JobQueue>,
+    pub metrics: Option<MetricsState>,
 }
 
 /// Enforces auth rules for an endpoint, returning the authenticated user if present.
@@ -75,6 +80,9 @@ pub async fn handle_list(
             let cache_key = RedisCache::build_key(&resource.resource, "list", &query_params, role);
 
             if let Some(cached) = cache.get(&cache_key).await {
+                if let Some(metrics) = &state.metrics {
+                    metrics.record_cache(true);
+                }
                 return Ok(HttpResponse::Ok()
                     .content_type("application/json")
                     .insert_header(("X-Cache", "HIT"))
@@ -82,6 +90,9 @@ pub async fn handle_list(
             }
 
             // Cache miss — execute query and store result
+            if let Some(metrics) = &state.metrics {
+                metrics.record_cache(false);
+            }
             let result = execute_list(&req, &state, &resource, &endpoint, user).await?;
             let body = result.to_string();
             cache.set(&cache_key, &body, cache_spec.ttl).await;
@@ -155,12 +166,18 @@ pub async fn handle_get(
             let cache_key = RedisCache::build_key(&resource.resource, "get", &query_params, role);
 
             if let Some(cached) = cache.get(&cache_key).await {
+                if let Some(metrics) = &state.metrics {
+                    metrics.record_cache(true);
+                }
                 return Ok(HttpResponse::Ok()
                     .content_type("application/json")
                     .insert_header(("X-Cache", "HIT"))
                     .body(cached));
             }
 
+            if let Some(metrics) = &state.metrics {
+                metrics.record_cache(false);
+            }
             let result =
                 execute_get(&state, &resource, &endpoint, &id, user.as_ref(), &req).await?;
             let body = serde_json::to_string(&result)
@@ -371,6 +388,41 @@ async fn run_write_side_effects(
     enqueue_declared_hooks(state, resource, endpoint, action, data).await;
 }
 
+fn schedule_file_cleanup(resource: &ResourceDefinition, deleted_data: &serde_json::Value) {
+    let file_paths: Vec<String> = resource
+        .schema
+        .iter()
+        .filter(|(_, field)| field.field_type == FieldType::File)
+        .filter_map(|(name, _)| {
+            deleted_data
+                .get(name)
+                .and_then(|value| value.as_str())
+                .map(ToOwned::to_owned)
+        })
+        .collect();
+
+    if file_paths.is_empty() {
+        return;
+    }
+
+    let backend = match StorageBackend::from_env() {
+        Ok(backend) => Arc::new(backend),
+        Err(error) => {
+            tracing::warn!(error = %error, "Skipping file cleanup: storage backend unavailable");
+            return;
+        }
+    };
+
+    tokio::spawn(async move {
+        let handler = UploadHandler::new(backend);
+        for path in file_paths {
+            if let Err(error) = handler.delete(&path).await {
+                tracing::warn!(path = %path, error = %error, "Failed to clean up uploaded file");
+            }
+        }
+    });
+}
+
 /// Invalidates cache for a resource after a write operation.
 async fn invalidate_cache(state: &AppState, resource: &ResourceDefinition, action: &str) {
     if let Some(ref cache) = state.cache {
@@ -399,6 +451,32 @@ pub async fn handle_create(
 ) -> Result<HttpResponse, ShaperailError> {
     enforce_auth(&req, &endpoint)?;
     let input_data = extract_input(&body, &resource, &endpoint)?;
+    validate_input(&input_data, &resource)?;
+
+    let rq = ResourceQuery::new(&resource, &state.pool);
+    let row = rq.insert(&input_data).await?;
+    let params = parse_item_params(&req);
+    let side_effect_data = row.0.clone();
+    let mut data = row.0;
+
+    if !params.fields.is_empty() {
+        data = response::select_fields(&data, &params.fields);
+    }
+
+    run_write_side_effects(&state, &resource, &endpoint, "created", &side_effect_data).await;
+    Ok(response::created(data))
+}
+
+/// Create handler for endpoints that declare `upload`.
+pub async fn handle_create_upload(
+    req: HttpRequest,
+    state: web::Data<Arc<AppState>>,
+    resource: web::Data<Arc<ResourceDefinition>>,
+    endpoint: web::Data<Arc<EndpointSpec>>,
+    payload: Multipart,
+) -> Result<HttpResponse, ShaperailError> {
+    enforce_auth(&req, &endpoint)?;
+    let input_data = extract_input_from_multipart(payload, &resource, &endpoint).await?;
     validate_input(&input_data, &resource)?;
 
     let rq = ResourceQuery::new(&resource, &state.pool);
@@ -451,6 +529,43 @@ pub async fn handle_update(
     Ok(response::single(data))
 }
 
+/// Update handler for endpoints that declare `upload`.
+pub async fn handle_update_upload(
+    req: HttpRequest,
+    state: web::Data<Arc<AppState>>,
+    resource: web::Data<Arc<ResourceDefinition>>,
+    endpoint: web::Data<Arc<EndpointSpec>>,
+    path: web::Path<String>,
+    payload: Multipart,
+) -> Result<HttpResponse, ShaperailError> {
+    let user = enforce_auth(&req, &endpoint)?;
+    let id = parse_uuid(&path)?;
+    let input_data = extract_input_from_multipart(payload, &resource, &endpoint).await?;
+
+    let rq = ResourceQuery::new(&resource, &state.pool);
+
+    if rbac::needs_owner_check(endpoint.auth.as_ref(), user.as_ref()) {
+        let existing = rq.find_by_id(&id).await?;
+        if let Some(ref u) = user {
+            rbac::check_owner(u, &existing.0)?;
+        }
+    }
+
+    validate_input(&input_data, &resource)?;
+
+    let row = rq.update_by_id(&id, &input_data).await?;
+    let params = parse_item_params(&req);
+    let side_effect_data = row.0.clone();
+    let mut data = row.0;
+
+    if !params.fields.is_empty() {
+        data = response::select_fields(&data, &params.fields);
+    }
+
+    run_write_side_effects(&state, &resource, &endpoint, "updated", &side_effect_data).await;
+    Ok(response::single(data))
+}
+
 /// Generates an Actix-web delete handler (soft or hard).
 pub async fn handle_delete(
     req: HttpRequest,
@@ -480,6 +595,9 @@ pub async fn handle_delete(
         (response::no_content(), row.0)
     };
 
+    if !endpoint.soft_delete {
+        schedule_file_cleanup(&resource, &deleted_data);
+    }
     run_write_side_effects(&state, &resource, &endpoint, "deleted", &deleted_data).await;
     Ok(result)
 }
@@ -582,6 +700,11 @@ pub async fn handle_bulk_delete(
         }
     }
 
+    if !endpoint.soft_delete {
+        for item in &results {
+            schedule_file_cleanup(&resource, item);
+        }
+    }
     invalidate_cache(&state, &resource, "delete").await;
     for item in &results {
         auto_emit_event(&state, &resource, "deleted", item).await;
@@ -613,6 +736,95 @@ fn extract_input(
     endpoint: &EndpointSpec,
 ) -> Result<serde_json::Map<String, serde_json::Value>, ShaperailError> {
     extract_input_from_value(body, resource, endpoint)
+}
+
+async fn extract_input_from_multipart(
+    mut payload: Multipart,
+    resource: &ResourceDefinition,
+    endpoint: &EndpointSpec,
+) -> Result<serde_json::Map<String, serde_json::Value>, ShaperailError> {
+    let upload = endpoint.upload.as_ref().ok_or_else(|| {
+        ShaperailError::Internal("multipart handler invoked without upload spec".to_string())
+    })?;
+
+    let backend = Arc::new(StorageBackend::from_name(&upload.storage)?);
+    let handler = UploadHandler::new(backend);
+    let max_size = parse_max_size(&upload.max_size)?;
+    let storage_prefix = format!("{}/{}", resource.resource, upload.field);
+
+    let mut body = serde_json::Map::new();
+    let mut uploaded_metadata: Option<FileMetadata> = None;
+
+    while let Some(mut field) = payload
+        .try_next()
+        .await
+        .map_err(|e| ShaperailError::Internal(format!("Failed to read multipart body: {e}")))?
+    {
+        let field_name = field.name().unwrap_or_default().to_string();
+        let mut bytes = Vec::new();
+
+        while let Some(chunk) = field
+            .try_next()
+            .await
+            .map_err(|e| ShaperailError::Internal(format!("Failed to read multipart field: {e}")))?
+        {
+            bytes.extend_from_slice(&chunk);
+        }
+
+        if field_name == upload.field {
+            let filename = field
+                .content_disposition()
+                .and_then(|cd| cd.get_filename())
+                .ok_or_else(|| {
+                    ShaperailError::Validation(vec![FieldError {
+                        field: field_name.clone(),
+                        message: "Uploaded file must include a filename".to_string(),
+                        code: "missing_filename".to_string(),
+                    }])
+                })?;
+            let mime_type = field
+                .content_type()
+                .map(|mime| mime.essence_str().to_string())
+                .unwrap_or_else(|| "application/octet-stream".to_string());
+
+            let metadata = handler
+                .process_upload(
+                    filename,
+                    &bytes,
+                    &mime_type,
+                    Some(max_size),
+                    upload.types.as_deref(),
+                    &storage_prefix,
+                )
+                .await?;
+
+            body.insert(
+                field_name.clone(),
+                serde_json::Value::String(metadata.path.clone()),
+            );
+            uploaded_metadata = Some(metadata);
+            continue;
+        }
+
+        let raw = String::from_utf8(bytes).map_err(|_| {
+            ShaperailError::Validation(vec![FieldError {
+                field: field_name.clone(),
+                message: "Multipart text fields must be valid UTF-8".to_string(),
+                code: "invalid_utf8".to_string(),
+            }])
+        })?;
+        let value = coerce_form_value(&field_name, &raw, resource)?;
+        body.insert(field_name, value);
+    }
+
+    let body_value = serde_json::Value::Object(body);
+    let mut input = extract_input_from_value(&body_value, resource, endpoint)?;
+
+    if let Some(metadata) = uploaded_metadata.as_ref() {
+        inject_upload_metadata(&mut input, resource, &upload.field, metadata);
+    }
+
+    Ok(input)
 }
 
 fn extract_input_from_value(
@@ -648,6 +860,90 @@ fn extract_input_from_value(
     }
 
     Ok(result)
+}
+
+fn coerce_form_value(
+    field_name: &str,
+    raw: &str,
+    resource: &ResourceDefinition,
+) -> Result<serde_json::Value, ShaperailError> {
+    let Some(schema) = resource.schema.get(field_name) else {
+        return Ok(serde_json::Value::String(raw.to_string()));
+    };
+
+    match schema.field_type {
+        shaperail_core::FieldType::String
+        | shaperail_core::FieldType::Enum
+        | shaperail_core::FieldType::File
+        | shaperail_core::FieldType::Uuid
+        | shaperail_core::FieldType::Timestamp
+        | shaperail_core::FieldType::Date => Ok(serde_json::Value::String(raw.to_string())),
+        shaperail_core::FieldType::Integer => raw
+            .parse::<i32>()
+            .map(serde_json::Value::from)
+            .map_err(|_| {
+                multipart_field_error(field_name, "must be a valid integer", "invalid_integer")
+            }),
+        shaperail_core::FieldType::Bigint => raw
+            .parse::<i64>()
+            .map(serde_json::Value::from)
+            .map_err(|_| {
+                multipart_field_error(field_name, "must be a valid integer", "invalid_bigint")
+            }),
+        shaperail_core::FieldType::Number => raw
+            .parse::<f64>()
+            .map(serde_json::Value::from)
+            .map_err(|_| {
+                multipart_field_error(field_name, "must be a valid number", "invalid_number")
+            }),
+        shaperail_core::FieldType::Boolean => raw
+            .parse::<bool>()
+            .map(serde_json::Value::from)
+            .map_err(|_| {
+                multipart_field_error(field_name, "must be true or false", "invalid_boolean")
+            }),
+        shaperail_core::FieldType::Json | shaperail_core::FieldType::Array => {
+            serde_json::from_str(raw).map_err(|_| {
+                multipart_field_error(field_name, "must be valid JSON", "invalid_json")
+            })
+        }
+    }
+}
+
+fn inject_upload_metadata(
+    input: &mut serde_json::Map<String, serde_json::Value>,
+    resource: &ResourceDefinition,
+    field_name: &str,
+    metadata: &FileMetadata,
+) {
+    let filename_field = format!("{field_name}_filename");
+    if resource.schema.contains_key(&filename_field) {
+        input.insert(
+            filename_field,
+            serde_json::Value::String(metadata.filename.clone()),
+        );
+    }
+
+    let mime_field = format!("{field_name}_mime_type");
+    if resource.schema.contains_key(&mime_field) {
+        input.insert(
+            mime_field,
+            serde_json::Value::String(metadata.mime_type.clone()),
+        );
+    }
+
+    let size_field = format!("{field_name}_size");
+    if resource.schema.contains_key(&size_field) {
+        input.insert(size_field, serde_json::Value::from(metadata.size));
+    }
+}
+
+fn multipart_field_error(field: &str, message: &str, code: &str) -> ShaperailError {
+    ShaperailError::Validation(vec![FieldError {
+        field: field.to_string(),
+        message: format!("{field} {message}"),
+        code: code.to_string(),
+    }])
 }
 
 #[cfg(test)]

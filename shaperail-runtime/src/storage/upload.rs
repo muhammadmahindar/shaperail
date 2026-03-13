@@ -121,7 +121,9 @@ impl UploadHandler {
         let safe_filename = sanitize_filename(filename);
         let path = format!("{storage_prefix}/{file_id}-{safe_filename}");
 
-        self.backend.upload(&path, data, mime_type).await
+        let mut metadata = self.backend.upload(&path, data, mime_type).await?;
+        metadata.filename = filename.to_string();
+        Ok(metadata)
     }
 
     /// Generate a thumbnail for an image file.

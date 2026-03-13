@@ -74,7 +74,10 @@ enum Commands {
     Routes,
     /// Show job queue depth and recent failures
     #[command(name = "jobs:status")]
-    JobsStatus,
+    JobsStatus {
+        /// Optional job ID to inspect
+        job_id: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -116,7 +119,7 @@ fn main() {
         },
         Commands::Doctor => commands::doctor::run(),
         Commands::Routes => commands::routes::run(),
-        Commands::JobsStatus => commands::jobs_status::run(),
+        Commands::JobsStatus { job_id } => commands::jobs_status::run(job_id.as_deref()),
     };
 
     process::exit(exit_code);

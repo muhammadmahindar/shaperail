@@ -19,7 +19,7 @@ serve, then package.
 | `shaperail export openapi --output openapi.json` | Review or publish the contract | Writes the deterministic OpenAPI 3.1 spec |
 | `shaperail migrate` | Schema changed | Creates a new SQL migration based on current resource definitions |
 | `shaperail seed` | Populate dev data | Loads YAML fixtures from `seeds/` into the database in a transaction |
-| `shaperail jobs:status` | Check background work | Shows Redis queue depths and dead letter count |
+| `shaperail jobs:status [job_id]` | Check background work | Shows queue summary by default or inspects a specific job |
 | `shaperail serve` | Run locally | Applies existing migrations and starts the development server |
 | `shaperail serve --check` | Smoke test a scaffolded app | Verifies the generated app compiles and the config is coherent |
 | `shaperail build --docker` | Package a deployable image | Builds the user app as a scratch-based Docker image |
@@ -115,10 +115,13 @@ shaperail export openapi --output openapi.json
 
 ```bash
 shaperail jobs:status
+shaperail jobs:status <job_id>
 ```
 
 Connects to Redis and displays the current queue depth for each priority level
-(critical, high, normal, low) and the dead letter queue count.
+(critical, high, normal, low), the dead letter queue count, and recent
+failures. If you pass a job ID, it prints the stored metadata for that job
+instead of the summary view.
 
 ## Practical notes
 

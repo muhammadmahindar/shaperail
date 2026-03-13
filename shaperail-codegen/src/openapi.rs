@@ -77,7 +77,8 @@ pub fn generate(config: &ProjectConfig, resources: &[ResourceDefinition]) -> ser
                 let openapi_path = ep.path.replace(":id", "{id}");
                 let method = ep.method.to_string().to_lowercase();
 
-                let operation = build_operation(&struct_name, &resource.resource, action, ep);
+                let operation =
+                    build_operation(&struct_name, resource, &resource.resource, action, ep);
 
                 let entry = paths
                     .entry(openapi_path)
@@ -162,6 +163,45 @@ fn build_input_schema(
     for field_name in input_fields {
         if let Some(schema) = resource.schema.get(field_name) {
             properties.insert(field_name.clone(), field_schema_to_openapi(schema));
+            if is_create && schema.required {
+                required_fields.push(serde_json::Value::String(field_name.clone()));
+            }
+        }
+    }
+
+    let mut result = serde_json::json!({
+        "type": "object",
+        "properties": serde_json::Value::Object(properties.into_iter().collect()),
+    });
+
+    if !required_fields.is_empty() {
+        result["required"] = serde_json::Value::Array(required_fields);
+    }
+
+    result
+}
+
+fn build_multipart_input_schema(
+    resource: &ResourceDefinition,
+    input_fields: &[String],
+    upload_field: &str,
+    is_create: bool,
+) -> serde_json::Value {
+    let mut properties = BTreeMap::new();
+    let mut required_fields = Vec::new();
+
+    for field_name in input_fields {
+        if let Some(schema) = resource.schema.get(field_name) {
+            let property = if field_name == upload_field {
+                serde_json::json!({
+                    "type": "string",
+                    "format": "binary"
+                })
+            } else {
+                field_schema_to_openapi(schema)
+            };
+
+            properties.insert(field_name.clone(), property);
             if is_create && schema.required {
                 required_fields.push(serde_json::Value::String(field_name.clone()));
             }
@@ -273,6 +313,7 @@ fn field_schema_to_openapi(schema: &FieldSchema) -> serde_json::Value {
 
 fn build_operation(
     struct_name: &str,
+    resource: &ResourceDefinition,
     resource_name: &str,
     action: &str,
     ep: &EndpointSpec,
@@ -394,9 +435,22 @@ fn build_operation(
     // Request body
     if let Some(input_fields) = &ep.input {
         if !input_fields.is_empty() {
-            let input_schema_name = format!("{struct_name}{}Input", to_pascal_case(action));
-            operation.insert(
-                "requestBody".to_string(),
+            let request_body = if let Some(upload) = &ep.upload {
+                serde_json::json!({
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": build_multipart_input_schema(
+                                resource,
+                                input_fields,
+                                &upload.field,
+                                action == "create",
+                            )
+                        }
+                    }
+                })
+            } else {
+                let input_schema_name = format!("{struct_name}{}Input", to_pascal_case(action));
                 serde_json::json!({
                     "required": true,
                     "content": {
@@ -406,8 +460,10 @@ fn build_operation(
                             }
                         }
                     }
-                }),
-            );
+                })
+            };
+
+            operation.insert("requestBody".to_string(), request_body);
         }
     }
 
@@ -562,7 +618,7 @@ mod tests {
     use super::*;
     use indexmap::IndexMap;
     use shaperail_core::{
-        AuthRule, CacheSpec, FieldSchema, FieldType, HttpMethod, PaginationStyle,
+        AuthRule, CacheSpec, FieldSchema, FieldType, HttpMethod, PaginationStyle, UploadSpec,
     };
 
     fn test_config() -> ProjectConfig {
@@ -787,6 +843,105 @@ mod tests {
         }
     }
 
+    fn upload_resource() -> ResourceDefinition {
+        let mut schema = IndexMap::new();
+        schema.insert(
+            "id".to_string(),
+            FieldSchema {
+                field_type: FieldType::Uuid,
+                primary: true,
+                generated: true,
+                required: false,
+                unique: false,
+                nullable: false,
+                reference: None,
+                min: None,
+                max: None,
+                format: None,
+                values: None,
+                default: None,
+                sensitive: false,
+                search: false,
+                items: None,
+            },
+        );
+        schema.insert(
+            "title".to_string(),
+            FieldSchema {
+                field_type: FieldType::String,
+                primary: false,
+                generated: false,
+                required: true,
+                unique: false,
+                nullable: false,
+                reference: None,
+                min: Some(serde_json::json!(1)),
+                max: Some(serde_json::json!(200)),
+                format: None,
+                values: None,
+                default: None,
+                sensitive: false,
+                search: false,
+                items: None,
+            },
+        );
+        schema.insert(
+            "attachment".to_string(),
+            FieldSchema {
+                field_type: FieldType::File,
+                primary: false,
+                generated: false,
+                required: true,
+                unique: false,
+                nullable: false,
+                reference: None,
+                min: None,
+                max: None,
+                format: None,
+                values: None,
+                default: None,
+                sensitive: false,
+                search: false,
+                items: None,
+            },
+        );
+
+        let mut endpoints = IndexMap::new();
+        endpoints.insert(
+            "create".to_string(),
+            EndpointSpec {
+                method: HttpMethod::Post,
+                path: "/assets".to_string(),
+                auth: None,
+                input: Some(vec!["title".to_string(), "attachment".to_string()]),
+                filters: None,
+                search: None,
+                pagination: None,
+                sort: None,
+                cache: None,
+                hooks: None,
+                events: None,
+                jobs: None,
+                upload: Some(UploadSpec {
+                    field: "attachment".to_string(),
+                    storage: "local".to_string(),
+                    max_size: "5mb".to_string(),
+                    types: Some(vec!["image/png".to_string()]),
+                }),
+                soft_delete: false,
+            },
+        );
+
+        ResourceDefinition {
+            resource: "assets".to_string(),
+            version: 1,
+            schema,
+            endpoints: Some(endpoints),
+            relations: None,
+            indexes: None,
+        }
+    }
+
     #[test]
     fn generates_valid_openapi_31_spec() {
         let config = test_config();
@@ -964,6 +1119,20 @@ mod tests {
         let create_op = &spec["paths"]["/users"]["post"];
         let schema_ref = &create_op["requestBody"]["content"]["application/json"]["schema"]["$ref"];
         assert_eq!(schema_ref, "#/components/schemas/UsersCreateInput");
+    }
+
+    #[test]
+    fn upload_request_body_uses_multipart_form_data() {
+        let config = test_config();
+        let resources = vec![upload_resource()];
+        let spec = generate(&config, &resources);
+
+        let create_op = &spec["paths"]["/assets"]["post"];
+        let schema = &create_op["requestBody"]["content"]["multipart/form-data"]["schema"];
+
+        assert_eq!(schema["properties"]["attachment"]["type"], "string");
+        assert_eq!(schema["properties"]["attachment"]["format"], "binary");
+        assert_eq!(schema["properties"]["title"]["type"], "string");
     }
 
     #[test]
