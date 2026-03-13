@@ -75,7 +75,7 @@ fn store_for(state: &AppState, resource: &ResourceDefinition) -> Option<Arc<dyn 
 /// When the app has a store registry, every resource must have a generated store.
 /// Returns the store if present, or None if the app has no registry (tests/fallback).
 /// Errors if registry exists but this resource has no store.
-fn store_for_or_error(
+pub(crate) fn store_for_or_error(
     state: &AppState,
     resource: &ResourceDefinition,
 ) -> Result<Option<Arc<dyn ResourceStore>>, ShaperailError> {
@@ -374,7 +374,7 @@ async fn enqueue_declared_jobs(
     }
 }
 
-async fn run_write_side_effects(
+pub(crate) async fn run_write_side_effects(
     state: &AppState,
     resource: &ResourceDefinition,
     endpoint: &EndpointSpec,
@@ -387,7 +387,10 @@ async fn run_write_side_effects(
     enqueue_declared_jobs(state, resource, endpoint, action, data).await;
 }
 
-fn schedule_file_cleanup(resource: &ResourceDefinition, deleted_data: &serde_json::Value) {
+pub(crate) fn schedule_file_cleanup(
+    resource: &ResourceDefinition,
+    deleted_data: &serde_json::Value,
+) {
     let file_paths: Vec<String> = resource
         .schema
         .iter()
@@ -999,7 +1002,8 @@ async fn extract_input_from_multipart(
     Ok(input)
 }
 
-fn extract_input_from_value(
+/// Extracts input fields from a JSON value (for REST and GraphQL mutations).
+pub(crate) fn extract_input_from_value(
     value: &serde_json::Value,
     resource: &ResourceDefinition,
     endpoint: &EndpointSpec,

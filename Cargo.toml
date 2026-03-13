@@ -78,6 +78,10 @@ clap = { version = "4", features = ["derive", "env"] }
 tera = "1"
 indexmap = "2"
 
+# GraphQL (M15)
+async-graphql = { version = "7", default-features = false, features = ["chrono", "uuid", "dynamic-schema"] }
+async-graphql-actix-web = { version = "7", default-features = false }
+
 # Testing
 insta = { version = "1", features = ["yaml", "json"] }
 assert_cmd = "2"

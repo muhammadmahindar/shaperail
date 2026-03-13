@@ -44,6 +44,8 @@ opentelemetry = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 prometheus = { workspace = true }
+async-graphql = { workspace = true }
+async-graphql-actix-web = { workspace = true }
 
 [dev-dependencies]
 sqlx = { workspace = true, default-features = false, features = ["runtime-tokio", "postgres", "uuid", "chrono", "json", "migrate", "macros"] }

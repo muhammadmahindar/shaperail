@@ -25,6 +25,7 @@ use shaperail_runtime::cache::{create_redis_pool, RedisCache};
 use shaperail_runtime::db::{
     FilterSet, PageRequest, ResourceQuery, ResourceRow, ResourceStore, SortParam, StoreRegistry,
 };
+use shaperail_runtime::graphql::{build_schema, graphql_handler};
 use shaperail_runtime::handlers::crud::AppState;
 use shaperail_runtime::handlers::routes::register_resource;
 use shaperail_runtime::observability::{metrics_handler, MetricsState, RequestLogger};
@@ -631,6 +632,155 @@ fn user_payload(email: &str, name: &str, role: &str, org_id: &str) -> serde_json
         "role": role,
         "org_id": org_id,
     })
+}
+
+// ---------------------------------------------------------------------------
+// 1. Full CRUD cycle
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// GraphQL (M15)
+// ---------------------------------------------------------------------------
+
+#[sqlx::test(migrations = "tests/fixtures/migrations")]
+async fn test_graphql_list_query(pool: sqlx::PgPool) {
+    let mut resource = test_resource();
+    resource.endpoints = Some(full_crud_endpoints());
+    let state = Arc::new(AppState {
+        pool: pool.clone(),
+        resources: vec![resource.clone()],
+        stores: None,
+        controllers: None,
+        jwt_config: None,
+        cache: None,
+        event_emitter: None,
+        job_queue: None,
+        metrics: Some(MetricsState::new().expect("metrics")),
+    });
+    let schema = build_schema(&[resource.clone()], state.clone()).expect("build_schema");
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(state.clone()))
+            .app_data(web::Data::new(schema))
+            .route("/graphql", web::post().to(graphql_handler))
+            .configure(|cfg| register_resource(cfg, &resource, state)),
+    )
+    .await;
+
+    let req = actix_test::TestRequest::post()
+        .uri("/graphql")
+        .set_json(json!({ "query": "{ list_test_users(limit: 5) { id email } }" }))
+        .to_request();
+    let resp = tokio::task::LocalSet::new()
+        .run_until(actix_test::call_service(&app, req))
+        .await;
+    assert_eq!(resp.status(), 200, "GraphQL list query should return 200");
+    let body: serde_json::Value = actix_test::read_body_json(resp).await;
+    assert!(body.get("data").is_some(), "response should have data");
+    let list = body["data"]["list_test_users"]
+        .as_array()
+        .expect("list_test_users array");
+    assert!(list.len() <= 5);
+}
+
+#[sqlx::test(migrations = "tests/fixtures/migrations")]
+async fn test_graphql_create_mutation(pool: sqlx::PgPool) {
+    let mut resource = test_resource();
+    resource.endpoints = Some(full_crud_endpoints());
+    let state = Arc::new(AppState {
+        pool: pool.clone(),
+        resources: vec![resource.clone()],
+        stores: None,
+        controllers: None,
+        jwt_config: None,
+        cache: None,
+        event_emitter: None,
+        job_queue: None,
+        metrics: Some(MetricsState::new().expect("metrics")),
+    });
+    let schema = build_schema(&[resource.clone()], state.clone()).expect("build_schema");
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(state.clone()))
+            .app_data(web::Data::new(schema))
+            .route("/graphql", web::post().to(graphql_handler))
+            .configure(|cfg| register_resource(cfg, &resource, state)),
+    )
+    .await;
+
+    let org_id = uuid::Uuid::new_v4().to_string();
+    let mutation = format!(
+        r#"mutation {{ create_test_users(input: {{ email: "gql@example.com", name: "GQL User", role: "member", org_id: "{}" }}) {{ id email name }} }}"#,
+        org_id
+    );
+    let req = actix_test::TestRequest::post()
+        .uri("/graphql")
+        .set_json(json!({ "query": mutation }))
+        .to_request();
+    let resp = tokio::task::LocalSet::new()
+        .run_until(actix_test::call_service(&app, req))
+        .await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = actix_test::read_body_json(resp).await;
+    assert!(
+        body.get("data").is_some(),
+        "response should have data: {body}"
+    );
+    let created = &body["data"]["create_test_users"];
+    assert!(created.get("id").is_some(), "created should have id");
+    assert_eq!(created["email"], "gql@example.com");
+    assert_eq!(created["name"], "GQL User");
+}
+
+#[sqlx::test(migrations = "tests/fixtures/migrations")]
+async fn test_graphql_auth_rejects_unauthorized_mutation(pool: sqlx::PgPool) {
+    let mut resource = test_resource();
+    let mut eps = full_crud_endpoints();
+    eps.get_mut("create").unwrap().auth = Some(AuthRule::Roles(vec!["admin".to_string()]));
+    resource.endpoints = Some(eps);
+    let state = Arc::new(AppState {
+        pool: pool.clone(),
+        resources: vec![resource.clone()],
+        stores: None,
+        controllers: None,
+        jwt_config: None,
+        cache: None,
+        event_emitter: None,
+        job_queue: None,
+        metrics: Some(MetricsState::new().expect("metrics")),
+    });
+    let schema = build_schema(&[resource.clone()], state.clone()).expect("build_schema");
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(state.clone()))
+            .app_data(web::Data::new(schema))
+            .route("/graphql", web::post().to(graphql_handler))
+            .configure(|cfg| register_resource(cfg, &resource, state)),
+    )
+    .await;
+
+    let org_id = uuid::Uuid::new_v4().to_string();
+    let mutation = format!(
+        r#"mutation {{ create_test_users(input: {{ email: "unauth@example.com", name: "Unauth", role: "member", org_id: "{}" }}) {{ id }} }}"#,
+        org_id
+    );
+    let req = actix_test::TestRequest::post()
+        .uri("/graphql")
+        .set_json(json!({ "query": mutation }))
+        .to_request();
+    let resp = tokio::task::LocalSet::new()
+        .run_until(actix_test::call_service(&app, req))
+        .await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = actix_test::read_body_json(resp).await;
+    assert!(
+        body.get("errors").is_some(),
+        "expected GraphQL errors when unauthenticated: {body}"
+    );
+    assert!(body
+        .get("data")
+        .and_then(|d| d.get("create_test_users"))
+        .is_none());
 }
 
 // ---------------------------------------------------------------------------
