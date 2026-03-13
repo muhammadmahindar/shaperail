@@ -14,7 +14,7 @@ list endpoints.
 
 ## Response envelope
 
-### Single record (GET /resources/:id, PATCH /resources/:id)
+### Single record (GET /v1/resources/:id, PATCH /v1/resources/:id)
 
 HTTP 200 for GET and PATCH. HTTP 201 for POST.
 
@@ -30,7 +30,7 @@ HTTP 200 for GET and PATCH. HTTP 201 for POST.
 }
 ```
 
-### List (GET /resources)
+### List (GET /v1/resources)
 
 The `meta` object varies by pagination style.
 
@@ -68,7 +68,20 @@ last page.
 }
 ```
 
-### Bulk operations
+### Bulk create (POST /resources/bulk)
+
+Send an array of records in the request body:
+
+```json
+{
+  "data": [
+    { "email": "alice@example.com", "name": "Alice", "role": "admin" },
+    { "email": "bob@example.com", "name": "Bob", "role": "member" }
+  ]
+}
+```
+
+Response (HTTP 201):
 
 ```json
 {
@@ -82,7 +95,57 @@ last page.
 }
 ```
 
-### Delete (DELETE /resources/:id)
+Declare the endpoint to enable bulk create:
+
+```yaml
+endpoints:
+  bulk_create:
+    method: POST
+    path: /users/bulk
+    auth: [admin]
+    input: [email, name, role, org_id]
+```
+
+All records are inserted in a single transaction — if any record fails
+validation, the entire batch is rolled back.
+
+### Bulk delete (DELETE /resources/bulk)
+
+Send an array of IDs in the request body:
+
+```json
+{
+  "ids": [
+    "550e8400-e29b-41d4-a716-446655440000",
+    "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+  ]
+}
+```
+
+Response (HTTP 200):
+
+```json
+{
+  "data": {
+    "deleted": 2
+  }
+}
+```
+
+Declare the endpoint:
+
+```yaml
+endpoints:
+  bulk_delete:
+    method: DELETE
+    path: /users/bulk
+    auth: [admin]
+```
+
+Bulk delete respects `soft_delete: true` when declared — it sets `deleted_at`
+instead of removing rows.
+
+### Delete (DELETE /v1/resources/:id)
 
 Returns HTTP 204 No Content with an empty body.
 
@@ -153,13 +216,17 @@ For all other error codes, `details` is `null`.
 All list endpoints accept the parameters below. Which filters and search fields
 are available depends on the resource file for that endpoint.
 
+All URLs are prefixed with `/v{version}` based on the resource's `version`
+field. The examples below use `/v1` — adjust the prefix if your resource uses a
+different version number.
+
 ### Filtering
 
 Use bracket syntax on the `filter` key. Only fields declared in the endpoint's
 `filters` list are accepted; all others are silently ignored.
 
 ```
-GET /users?filter[role]=admin&filter[org_id]=550e8400-e29b-41d4-a716-446655440000
+GET /v1/users?filter[role]=admin&filter[org_id]=550e8400-e29b-41d4-a716-446655440000
 ```
 
 Filters produce exact-match `WHERE` clauses (`field = value`).
@@ -170,7 +237,7 @@ Pass a comma-separated list of field names to `sort`. Prefix a field with `-`
 for descending order; no prefix means ascending.
 
 ```
-GET /users?sort=-created_at,name
+GET /v1/users?sort=-created_at,name
 ```
 
 This sorts by `created_at DESC`, then `name ASC`. Only fields declared in the
@@ -182,7 +249,7 @@ Pass a plain-text term to `search`. The server performs a PostgreSQL full-text
 search across the fields declared in the endpoint's `search` list.
 
 ```
-GET /users?search=alice
+GET /v1/users?search=alice
 ```
 
 The generated SQL uses `to_tsvector('english', ...)` and `plainto_tsquery`,
@@ -194,8 +261,8 @@ Cursor pagination is the default when `pagination: cursor` is set (or when no
 pagination style is specified).
 
 ```
-GET /users?limit=10
-GET /users?limit=10&after=NTUwZTg0MDAtZTI5Yi00MWQ0LWE3MTYtNDQ2NjU1NDQwMDAw
+GET /v1/users?limit=10
+GET /v1/users?limit=10&after=NTUwZTg0MDAtZTI5Yi00MWQ0LWE3MTYtNDQ2NjU1NDQwMDAw
 ```
 
 | Parameter | Default | Range   | Description                         |
@@ -208,8 +275,8 @@ GET /users?limit=10&after=NTUwZTg0MDAtZTI5Yi00MWQ0LWE3MTYtNDQ2NjU1NDQwMDAw
 Available when the endpoint declares `pagination: offset`.
 
 ```
-GET /users?limit=25&offset=0
-GET /users?limit=25&offset=25
+GET /v1/users?limit=25&offset=0
+GET /v1/users?limit=25&offset=25
 ```
 
 | Parameter | Default | Range   | Description                         |
@@ -223,7 +290,7 @@ Return only specific fields by passing a comma-separated list to `fields`. If
 omitted, all fields are returned.
 
 ```
-GET /users?fields=name,email
+GET /v1/users?fields=name,email
 ```
 
 ```json
@@ -242,8 +309,8 @@ Request related resources with `include`. Pass a comma-separated list of
 relation names declared in the resource file's `relations` block.
 
 ```
-GET /users/550e8400-...?include=organization
-GET /users?include=organization
+GET /v1/users/550e8400-...?include=organization
+GET /v1/users?include=organization
 ```
 
 ### Cache bypass
@@ -251,7 +318,7 @@ GET /users?include=organization
 Skip the server-side cache for a single request:
 
 ```
-GET /users?nocache=1
+GET /v1/users?nocache=1
 ```
 
 ---
@@ -261,5 +328,5 @@ GET /users?nocache=1
 All query parameters can be used together:
 
 ```
-GET /users?filter[role]=admin&sort=-created_at&search=alice&limit=10&fields=name,email&include=organization
+GET /v1/users?filter[role]=admin&sort=-created_at&search=alice&limit=10&fields=name,email&include=organization
 ```

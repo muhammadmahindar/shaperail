@@ -18,7 +18,7 @@ you out of the docs site.
 
 ## What the example covers
 
-- public blog post reads
+- public blog post reads with versioned URLs (`/v1/posts`)
 - protected post creation and updates
 - owner-based post and comment updates through `created_by`
 - post/comment relations
@@ -91,10 +91,24 @@ endpoints:
 
 This resource demonstrates:
 
-- public read endpoints
+- public read endpoints (served at `/v1/posts` thanks to `version: 1`)
 - owner-aware updates through `created_by`
 - cursor pagination
 - soft delete on the delete route
+
+You can add business logic by creating `resources/posts.controller.rs`:
+
+```yaml
+  create:
+    method: POST
+    path: /posts
+    auth: [admin, member]
+    input: [title, slug, body, status, created_by, published_at]
+    controller:
+      before: set_created_by
+```
+
+See the [Controllers guide]({{ '/controllers/' | relative_url }}) for details.
 
 ## Comments resource
 

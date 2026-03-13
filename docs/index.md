@@ -67,6 +67,7 @@ You edit these files; the framework generates the rest.
 | File | Role |
 | --- | --- |
 | `resources/*.yaml` | Schema, endpoints, auth, relations, filters, pagination, cache, indexes |
+| `resources/*.controller.rs` | Business logic functions for controllers declared in the YAML |
 | `migrations/*.sql` | SQL that evolves the database (generated from resource diff) |
 | `shaperail.config.yaml` | Port, database, cache, auth, storage, logging, event subscribers |
 | `.env` | `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, etc. |
@@ -79,12 +80,14 @@ Generated Rust, OpenAPI, and routes live in `generated/` and are not hand-edited
 ## Features at a glance
 
 - **REST API** — List, get, create, update, delete, bulk create/delete; cursor or offset pagination; filters, sort, full-text search; field selection and relation loading (`?include=…`).
+- **API versioning** — Per-resource `version` field prefixes all routes (`/v1/users`, `/v2/orders`). OpenAPI spec and CLI output reflect versioned paths.
+- **Controllers** — Synchronous before/after business logic on write endpoints. Validate input, normalize data, enrich responses — all within the request lifecycle.
 - **Auth** — JWT (Bearer) and API keys (`X-API-Key`); role-based and owner-based rules; rate limiting via Redis.
 - **Caching** — Redis-backed cache per GET endpoint with TTL and configurable invalidation.
-- **Background jobs** — Priority queues, retries, dead letter queue, job status; enqueue from hooks.
+- **Background jobs** — Priority queues, retries, dead letter queue, job status; enqueue from endpoint declarations.
 - **WebSockets** — Channel YAML, JWT on upgrade, room subscriptions, Redis pub/sub for multi-instance broadcast.
 - **File storage** — Local, S3, GCS, Azure; upload validation, signed URLs, image processing.
-- **Events & webhooks** — Auto-emitted resource events; subscribers (job, webhook, channel, hook); outbound HMAC-signed webhooks; inbound webhook endpoints.
+- **Events & webhooks** — Auto-emitted resource events; subscribers (job, webhook, channel); outbound HMAC-signed webhooks; inbound webhook endpoints.
 - **Observability** — Structured JSON logs, request_id, PII redaction; Prometheus metrics; OpenTelemetry; `/health` and `/health/ready`.
 - **OpenAPI & SDK** — Deterministic OpenAPI 3.1; TypeScript SDK generation.
 
@@ -98,7 +101,7 @@ Generated Rust, OpenAPI, and routes live in `generated/` and are not hand-edited
 
 ### Guides
 
-- [**Guides**]({{ '/guides/' | relative_url }}) — Auth, migrations, Docker, caching, jobs, WebSockets, file storage, events, observability.
+- [**Guides**]({{ '/guides/' | relative_url }}) — Auth, controllers, migrations, Docker, caching, jobs, WebSockets, file storage, events, observability.
 
 ### Reference
 

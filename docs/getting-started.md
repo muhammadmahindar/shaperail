@@ -49,6 +49,7 @@ cd my-app
 The scaffold includes:
 
 - `resources/posts.yaml` as a starter resource
+- `controllers/` directory for business logic (see [Controllers]({{ '/controllers/' | relative_url }}))
 - `migrations/` with an initial SQL migration
 - `docker-compose.yml` for Postgres and Redis
 - `.env` wired to that compose file
@@ -71,10 +72,11 @@ shaperail serve
 
 Verify the generated surfaces:
 
-- `http://localhost:3000/docs`
-- `http://localhost:3000/openapi.json`
-- `http://localhost:3000/health`
-- `http://localhost:3000/health/ready`
+- `http://localhost:3000/docs` — interactive API docs
+- `http://localhost:3000/openapi.json` — OpenAPI 3.1 spec
+- `http://localhost:3000/health` — liveness check
+- `http://localhost:3000/health/ready` — readiness (DB + Redis)
+- `http://localhost:3000/v1/posts` — your first versioned API endpoint
 
 ## Make your first change
 

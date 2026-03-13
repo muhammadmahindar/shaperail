@@ -15,6 +15,7 @@ Task-focused guides for building and running a Shaperail application.
 | --- | --- |
 | [**Getting started**]({{ '/getting-started/' | relative_url }}) | Install the CLI, scaffold a project, start Postgres and Redis, run the app, make your first schema change, and troubleshoot. |
 | [**Auth and ownership**]({{ '/auth-and-ownership/' | relative_url }}) | Public, role-based, and owner-based auth; JWT and API keys; rate limiting; recommended patterns for `created_by` and owner checks. |
+| [**Controllers**]({{ '/controllers/' | relative_url }}) | Synchronous business logic before/after DB operations: validation, normalization, response enrichment. ControllerContext API, file conventions, common patterns. |
 | [**Migrations and schema changes**]({{ '/migrations-and-schema-changes/' | relative_url }}) | Workflow when resources change: validate, migrate, review SQL, rollback. How `shaperail migrate` and `shaperail serve` interact. |
 | [**Docker deployment**]({{ '/docker-deployment/' | relative_url }}) | Local development with Docker Compose, standard URLs, release image with `shaperail build --docker`, production checklist. |
 | [**Caching**]({{ '/caching/' | relative_url }}) | Declaring cache on GET endpoints, cache key format, auto-invalidation, `invalidate_on`, cache bypass, Redis configuration. |
