@@ -5,6 +5,15 @@ All notable changes to Shaperail will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-03-16
+
+### Changed
+
+- M17 Multi-Service: workspace YAML, service registry, typed inter-service clients, distributed sagas
+- M18 Multi-Tenancy: tenant_key for automatic row-level isolation, scoped caching and rate limits
+- M19 WASM Plugins: wasmtime runtime, sandboxed plugin execution, TypeScript/Python examples
+
+
 ## [0.5.0] - 2026-03-15
 
 ### Added
@@ -113,3 +122,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.2.2]: https://github.com/shaperail/shaperail/releases/tag/v0.2.2
 [0.2.1]: https://github.com/shaperail/shaperail/releases/tag/v0.2.1
 [0.2.0]: https://github.com/shaperail/shaperail/releases/tag/v0.2.0
+[0.6.0]: https://github.com/shaperail/shaperail/releases/tag/v0.6.0
