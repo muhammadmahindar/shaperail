@@ -14,7 +14,7 @@ serve, then package.
 | --- | --- |
 | `shaperail init <name>` | Scaffold a new project (resources, migrations, config, Docker Compose, .env). |
 | `shaperail generate` | Run codegen for all resource files; write generated Rust and artifacts to `generated/`. |
-| `shaperail serve [--port PORT] [--check]` | Start the dev server (with hot reload via cargo-watch). Use `--check` to validate without starting. |
+| `shaperail serve [--port PORT] [--check] [--workspace]` | Start the dev server (with hot reload via cargo-watch). Use `--check` to validate without starting. Use `--workspace` to start all services declared in `shaperail.workspace.yaml`. |
 | `shaperail build [--docker]` | Build release binary. With `--docker`, build a scratch-based Docker image. |
 | `shaperail validate [path]` | Validate resource file(s). Default path: `resources`. |
 | `shaperail test [-- args...]` | Run generated and custom tests (`cargo test` with optional args). |
@@ -106,13 +106,16 @@ Seed file format:
 ```bash
 shaperail serve
 shaperail serve --check
+shaperail serve --workspace
 shaperail build
 shaperail build --docker
 ```
 
 Use `serve` during development. Use `serve --check` in smoke tests and CI for a
-cheap project-level validation. Use `build --docker` when you want the release
-image contract for a user app.
+cheap project-level validation. Use `serve --workspace` from a workspace root to
+start all services declared in `shaperail.workspace.yaml` (see
+[Multi-service workspaces]({{ '/multi-service/' | relative_url }})). Use
+`build --docker` when you want the release image contract for a user app.
 
 ## Suggested daily workflow
 

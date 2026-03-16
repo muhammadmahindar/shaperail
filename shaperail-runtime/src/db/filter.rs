@@ -38,6 +38,11 @@ impl FilterSet {
         FilterSet { filters }
     }
 
+    /// Adds a filter programmatically (e.g., for tenant scoping).
+    pub fn add(&mut self, field: String, value: String) {
+        self.filters.push(FilterParam { field, value });
+    }
+
     /// Returns true if there are no filters.
     pub fn is_empty(&self) -> bool {
         self.filters.is_empty()

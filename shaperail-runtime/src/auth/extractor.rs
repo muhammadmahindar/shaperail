@@ -26,6 +26,8 @@ pub struct AuthenticatedUser {
     pub id: String,
     /// The user's role (from JWT `role` claim or API key mapping).
     pub role: String,
+    /// The user's tenant ID (M18). Present when multi-tenancy is enabled.
+    pub tenant_id: Option<String>,
 }
 
 impl FromRequest for AuthenticatedUser {
@@ -61,6 +63,7 @@ fn extract_auth(req: &HttpRequest) -> Result<AuthenticatedUser, ShaperailError> 
             return Ok(AuthenticatedUser {
                 id: claims.sub,
                 role: claims.role,
+                tenant_id: claims.tenant_id,
             });
         }
     }
@@ -96,6 +99,7 @@ mod tests {
         let user = AuthenticatedUser {
             id: "u1".to_string(),
             role: "admin".to_string(),
+            tenant_id: None,
         };
         assert_eq!(user.id, "u1");
         assert_eq!(user.role, "admin");

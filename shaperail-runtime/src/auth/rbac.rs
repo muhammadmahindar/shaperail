@@ -100,6 +100,7 @@ mod tests {
         AuthenticatedUser {
             id: "user-1".to_string(),
             role: "admin".to_string(),
+            tenant_id: None,
         }
     }
 
@@ -107,6 +108,7 @@ mod tests {
         AuthenticatedUser {
             id: "user-2".to_string(),
             role: "member".to_string(),
+            tenant_id: None,
         }
     }
 
@@ -114,6 +116,7 @@ mod tests {
         AuthenticatedUser {
             id: "user-3".to_string(),
             role: "viewer".to_string(),
+            tenant_id: None,
         }
     }
 
@@ -166,6 +169,7 @@ mod tests {
         let user = AuthenticatedUser {
             id: "user-1".to_string(),
             role: "member".to_string(),
+            tenant_id: None,
         };
         let record = serde_json::json!({"id": "rec-1", "created_by": "user-1"});
         assert!(check_owner(&user, &record).is_ok());
@@ -176,6 +180,7 @@ mod tests {
         let user = AuthenticatedUser {
             id: "user-1".to_string(),
             role: "member".to_string(),
+            tenant_id: None,
         };
         let record = serde_json::json!({"id": "rec-1", "created_by": "user-2"});
         assert!(matches!(

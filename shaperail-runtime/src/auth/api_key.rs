@@ -21,8 +21,14 @@ impl ApiKeyStore {
 
     /// Registers an API key mapping to a user identity.
     pub fn insert(&mut self, key: String, user_id: String, role: String) {
-        self.keys
-            .insert(key, AuthenticatedUser { id: user_id, role });
+        self.keys.insert(
+            key,
+            AuthenticatedUser {
+                id: user_id,
+                role,
+                tenant_id: None,
+            },
+        );
     }
 
     /// Looks up an API key and returns the associated user, if valid.

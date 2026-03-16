@@ -1,0 +1,79 @@
+### Multi-Tenant SaaS — HTTP request examples
+### Use with VS Code REST Client extension or similar tools.
+
+### ---
+### Setup: create organizations (as super_admin)
+### ---
+
+### Create Acme Corp
+POST http://localhost:3000/v1/organizations
+Authorization: Bearer {{super_admin_token}}
+Content-Type: application/json
+
+{
+  "name": "Acme Corp",
+  "plan": "pro"
+}
+
+### Create Widgets Inc
+POST http://localhost:3000/v1/organizations
+Authorization: Bearer {{super_admin_token}}
+Content-Type: application/json
+
+{
+  "name": "Widgets Inc",
+  "plan": "enterprise"
+}
+
+### ---
+### Tenant A (Acme Corp) operations — uses a token with tenant_id = Acme's org UUID
+### ---
+
+### Create a project (org_id auto-injected from JWT tenant_id)
+POST http://localhost:3000/v1/projects
+Authorization: Bearer {{acme_member_token}}
+Content-Type: application/json
+
+{
+  "name": "Website Redesign",
+  "status": "active",
+  "created_by": "user-acme-1"
+}
+
+### List projects — only sees Acme Corp's projects
+GET http://localhost:3000/v1/projects
+Authorization: Bearer {{acme_member_token}}
+
+### ---
+### Tenant B (Widgets Inc) operations
+### ---
+
+### Create a project for Widgets Inc
+POST http://localhost:3000/v1/projects
+Authorization: Bearer {{widgets_member_token}}
+Content-Type: application/json
+
+{
+  "name": "Inventory System",
+  "created_by": "user-widgets-1"
+}
+
+### List projects — only sees Widgets Inc's projects
+GET http://localhost:3000/v1/projects
+Authorization: Bearer {{widgets_member_token}}
+
+### Try to get Acme's project — returns 404 (tenant isolation)
+GET http://localhost:3000/v1/projects/{{acme_project_id}}
+Authorization: Bearer {{widgets_member_token}}
+
+### ---
+### super_admin — sees all tenants
+### ---
+
+### List all projects across all organizations
+GET http://localhost:3000/v1/projects
+Authorization: Bearer {{super_admin_token}}
+
+### Can read any tenant's specific project
+GET http://localhost:3000/v1/projects/{{acme_project_id}}
+Authorization: Bearer {{super_admin_token}}

@@ -29,20 +29,23 @@ endpoints:
 Every cached response is stored under a key with this structure:
 
 ```
-shaperail:<resource>:<endpoint>:<query_hash>:<user_role>
+shaperail:<resource>:<endpoint>:<query_hash>:<tenant_id>:<user_role>
 ```
 
 For example, a `GET /users?filter[role]=admin` request made by a user with
-the `member` role on the `users` resource's `list` endpoint produces a key
-like:
+the `member` role and tenant `org-abc` on the `users` resource's `list`
+endpoint produces a key like:
 
 ```
-shaperail:users:list:a1b2c3d4e5f60718:member
+shaperail:users:list:a1b2c3d4e5f60718:org-abc:member
 ```
 
 The `query_hash` is a truncated SHA-256 of the sorted query parameters. This
 means the same filters in any order produce the same cache key. Different
-roles see separate cached responses.
+roles and different tenants see separate cached responses.
+
+When the resource has no `tenant_key` or the user has no `tenant_id` claim,
+the tenant segment is `_` (underscore placeholder).
 
 ## Auto-invalidation
 

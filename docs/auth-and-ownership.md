@@ -82,8 +82,9 @@ auth:
   refresh_expiry: 86400 # refresh token TTL (default: 30d)
 ```
 
-The JWT payload carries `sub` (user ID), `role`, and `token_type` (access or
-refresh). Only `access` tokens are accepted for API requests.
+The JWT payload carries `sub` (user ID), `role`, `token_type` (access or
+refresh), and optionally `tenant_id` for multi-tenancy. Only `access` tokens
+are accepted for API requests.
 
 ### API key authentication
 
@@ -104,6 +105,15 @@ state is stored in Redis and survives server restarts.
 Rate limiting keys:
 - Unauthenticated: `ip:<address>`
 - Authenticated: `user:<user_id>`
+- Tenant-scoped (when `tenant_key` is set): `t:<tenant_id>:user:<user_id>`
+
+## Multi-tenancy
+
+When a resource declares `tenant_key`, Shaperail scopes all queries to the
+user's `tenant_id` JWT claim. The `super_admin` role bypasses tenant filtering.
+
+See the [Multi-tenancy guide]({{ '/multi-tenancy/' | relative_url }}) for full
+details.
 
 ## What Shaperail does not do automatically
 

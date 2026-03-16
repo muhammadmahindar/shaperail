@@ -104,6 +104,7 @@ fn test_resource() -> ResourceDefinition {
         relations: None,
         indexes: None,
         db: None,
+        tenant_key: None,
     }
 }
 

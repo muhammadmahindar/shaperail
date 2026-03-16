@@ -21,15 +21,27 @@ impl RedisCache {
 
     /// Builds a cache key from components.
     ///
-    /// Format: `shaperail:<resource>:<endpoint>:<query_hash>:<role>`
+    /// Format: `shaperail:<resource>:<endpoint>:<query_hash>:<tenant_id>:<role>`
+    /// The tenant_id segment ensures cache entries never leak across tenants (M18).
     pub fn build_key(
         resource: &str,
         endpoint: &str,
         query_params: &HashMap<String, String>,
         user_role: &str,
     ) -> String {
+        Self::build_key_with_tenant(resource, endpoint, query_params, user_role, "_")
+    }
+
+    /// Builds a tenant-scoped cache key (M18).
+    pub fn build_key_with_tenant(
+        resource: &str,
+        endpoint: &str,
+        query_params: &HashMap<String, String>,
+        user_role: &str,
+        tenant_id: &str,
+    ) -> String {
         let query_hash = Self::hash_query(query_params);
-        format!("shaperail:{resource}:{endpoint}:{query_hash}:{user_role}")
+        format!("shaperail:{resource}:{endpoint}:{query_hash}:{tenant_id}:{user_role}")
     }
 
     /// Hashes query parameters into a deterministic short string.
@@ -169,5 +181,29 @@ mod tests {
             RedisCache::hash_query(&params1),
             RedisCache::hash_query(&params2)
         );
+    }
+
+    #[test]
+    fn build_key_with_tenant_includes_tenant_id() {
+        let params = HashMap::new();
+        let key = RedisCache::build_key_with_tenant("users", "list", &params, "member", "org-a");
+        assert!(key.contains(":org-a:"));
+        assert!(key.ends_with(":member"));
+    }
+
+    #[test]
+    fn cache_keys_differ_by_tenant() {
+        let params = HashMap::new();
+        let key_a = RedisCache::build_key_with_tenant("users", "list", &params, "member", "org-a");
+        let key_b = RedisCache::build_key_with_tenant("users", "list", &params, "member", "org-b");
+        assert_ne!(key_a, key_b, "Cache keys for different tenants must differ");
+    }
+
+    #[test]
+    fn build_key_backwards_compatible() {
+        // build_key (no tenant) should use "_" as placeholder
+        let params = HashMap::new();
+        let key = RedisCache::build_key("users", "list", &params, "admin");
+        assert!(key.contains(":_:"));
     }
 }

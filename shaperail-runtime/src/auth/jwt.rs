@@ -16,6 +16,9 @@ pub struct Claims {
     /// Token type: "access" or "refresh".
     #[serde(default = "default_token_type")]
     pub token_type: String,
+    /// Tenant ID (M18). Optional — present when multi-tenancy is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
 }
 
 fn default_token_type() -> String {
@@ -64,6 +67,16 @@ impl JwtConfig {
         user_id: &str,
         role: &str,
     ) -> Result<String, jsonwebtoken::errors::Error> {
+        self.encode_access_with_tenant(user_id, role, None)
+    }
+
+    /// Encodes an access token with an optional tenant_id claim (M18).
+    pub fn encode_access_with_tenant(
+        &self,
+        user_id: &str,
+        role: &str,
+        tenant_id: Option<&str>,
+    ) -> Result<String, jsonwebtoken::errors::Error> {
         let now = Utc::now();
         let claims = Claims {
             sub: user_id.to_string(),
@@ -71,6 +84,7 @@ impl JwtConfig {
             iat: now.timestamp(),
             exp: (now + self.access_ttl).timestamp(),
             token_type: "access".to_string(),
+            tenant_id: tenant_id.map(ToString::to_string),
         };
         encode(
             &Header::default(),
@@ -92,6 +106,7 @@ impl JwtConfig {
             iat: now.timestamp(),
             exp: (now + self.refresh_ttl).timestamp(),
             token_type: "refresh".to_string(),
+            tenant_id: None,
         };
         encode(
             &Header::default(),
@@ -161,5 +176,25 @@ mod tests {
         let token = cfg.encode_access("user-123", "admin").unwrap();
         let result = cfg.decode(&token);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn encode_access_with_tenant_id() {
+        let cfg = test_config();
+        let token = cfg
+            .encode_access_with_tenant("user-123", "admin", Some("org-abc"))
+            .unwrap();
+        let claims = cfg.decode(&token).unwrap();
+        assert_eq!(claims.sub, "user-123");
+        assert_eq!(claims.role, "admin");
+        assert_eq!(claims.tenant_id.as_deref(), Some("org-abc"));
+    }
+
+    #[test]
+    fn encode_access_without_tenant_id() {
+        let cfg = test_config();
+        let token = cfg.encode_access("user-123", "admin").unwrap();
+        let claims = cfg.decode(&token).unwrap();
+        assert!(claims.tenant_id.is_none());
     }
 }

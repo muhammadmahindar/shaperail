@@ -327,6 +327,13 @@ Rules:
 Interpolation happens before YAML parsing, so the substituted value becomes
 part of the raw YAML text.
 
+## Workspace configuration (M17)
+
+Multi-service projects use `shaperail.workspace.yaml` instead of (or alongside)
+the per-service `shaperail.config.yaml`. See
+[Multi-service workspaces]({{ '/multi-service/' | relative_url }}) for the full
+format reference, including service definitions, shared config, and saga files.
+
 ## Validation rules
 
 Shaperail rejects invalid configuration at startup with a clear error message.

@@ -92,6 +92,17 @@ impl RateLimiter {
             None => format!("ip:{ip}"),
         }
     }
+
+    /// Builds a tenant-scoped rate limit key (M18).
+    ///
+    /// Scopes the key by tenant_id so each tenant has independent rate limits.
+    pub fn key_for_tenant(ip: &str, user_id: Option<&str>, tenant_id: Option<&str>) -> String {
+        let base = Self::key_for(ip, user_id);
+        match tenant_id {
+            Some(tid) => format!("t:{tid}:{base}"),
+            None => base,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -115,5 +126,27 @@ mod tests {
     fn key_for_user() {
         let key = RateLimiter::key_for("192.168.1.1", Some("user-123"));
         assert_eq!(key, "user:user-123");
+    }
+
+    #[test]
+    fn key_for_tenant_scoped() {
+        let key = RateLimiter::key_for_tenant("192.168.1.1", Some("user-123"), Some("org-a"));
+        assert_eq!(key, "t:org-a:user:user-123");
+    }
+
+    #[test]
+    fn key_for_tenant_no_tenant() {
+        let key = RateLimiter::key_for_tenant("192.168.1.1", Some("user-123"), None);
+        assert_eq!(key, "user:user-123");
+    }
+
+    #[test]
+    fn tenant_keys_differ() {
+        let key_a = RateLimiter::key_for_tenant("192.168.1.1", Some("user-123"), Some("org-a"));
+        let key_b = RateLimiter::key_for_tenant("192.168.1.1", Some("user-123"), Some("org-b"));
+        assert_ne!(
+            key_a, key_b,
+            "Rate limit keys for different tenants must differ"
+        );
     }
 }

@@ -1,0 +1,54 @@
+resource: projects
+version: 1
+tenant_key: org_id
+
+schema:
+  id:         { type: uuid, primary: true, generated: true }
+  org_id:     { type: uuid, ref: organizations.id, required: true }
+  name:       { type: string, min: 1, max: 200, required: true }
+  status:     { type: enum, values: [active, archived], default: active }
+  created_by: { type: uuid, required: true }
+  created_at: { type: timestamp, generated: true }
+  updated_at: { type: timestamp, generated: true }
+
+endpoints:
+  list:
+    method: GET
+    path: /projects
+    auth: [member, admin]
+    filters: [status]
+    search: [name]
+    pagination: cursor
+    cache: { ttl: 60 }
+
+  get:
+    method: GET
+    path: /projects/:id
+    auth: [member, admin]
+
+  create:
+    method: POST
+    path: /projects
+    auth: [member, admin]
+    input: [name, status, created_by]
+    events: [project.created]
+
+  update:
+    method: PATCH
+    path: /projects/:id
+    auth: [admin, owner]
+    input: [name, status]
+
+  delete:
+    method: DELETE
+    path: /projects/:id
+    auth: [admin]
+    soft_delete: true
+
+relations:
+  organization: { resource: organizations, type: belongs_to, key: org_id }
+  tasks:        { resource: tasks, type: has_many, foreign_key: project_id }
+
+indexes:
+  - { fields: [org_id, status] }
+  - { fields: [created_at], order: desc }

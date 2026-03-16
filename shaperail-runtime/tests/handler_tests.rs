@@ -251,6 +251,7 @@ mod handler_unit_tests {
             resource: "users".to_string(),
             version: 1,
             db: None,
+            tenant_key: None,
             schema,
             endpoints: Some(endpoints),
             relations: None,
@@ -527,6 +528,7 @@ mod auth_tests {
         AuthenticatedUser {
             id: "user-1".to_string(),
             role: "admin".to_string(),
+            tenant_id: None,
         }
     }
 
@@ -534,6 +536,7 @@ mod auth_tests {
         AuthenticatedUser {
             id: "user-2".to_string(),
             role: "member".to_string(),
+            tenant_id: None,
         }
     }
 
@@ -541,6 +544,7 @@ mod auth_tests {
         AuthenticatedUser {
             id: "user-3".to_string(),
             role: "viewer".to_string(),
+            tenant_id: None,
         }
     }
 
@@ -613,6 +617,7 @@ mod auth_tests {
         let user = AuthenticatedUser {
             id: "user-1".to_string(),
             role: "member".to_string(),
+            tenant_id: None,
         };
         let record = serde_json::json!({"id": "rec-1", "created_by": "user-1"});
         assert!(rbac::check_owner(&user, &record).is_ok());
@@ -623,6 +628,7 @@ mod auth_tests {
         let user = AuthenticatedUser {
             id: "user-1".to_string(),
             role: "member".to_string(),
+            tenant_id: None,
         };
         let record = serde_json::json!({"id": "rec-1", "created_by": "user-999"});
         assert!(matches!(
@@ -737,13 +743,14 @@ mod cache_tests {
         params.insert("filter[role]".to_string(), "admin".to_string());
         let key = RedisCache::build_key("users", "list", &params, "member");
 
-        // Format: shaperail:<resource>:<endpoint>:<hash>:<role>
+        // Format: shaperail:<resource>:<endpoint>:<hash>:<tenant_id>:<role>
         let parts: Vec<&str> = key.split(':').collect();
         assert_eq!(parts[0], "shaperail");
         assert_eq!(parts[1], "users");
         assert_eq!(parts[2], "list");
         // parts[3] is the query hash
-        assert_eq!(parts[4], "member");
+        assert_eq!(parts[4], "_"); // default tenant placeholder (M18)
+        assert_eq!(parts[5], "member");
     }
 
     #[test]
