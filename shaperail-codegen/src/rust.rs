@@ -198,6 +198,12 @@ pub fn build_store_registry(pool: sqlx::PgPool) -> shaperail_runtime::db::StoreR
 {registry_lines}
     std::sync::Arc::new(stores)
 }}
+
+/// Returns an empty controller map. Register custom controller functions here
+/// or populate from `resources/<name>.controller.rs` files.
+pub fn build_controller_map() -> shaperail_runtime::handlers::controller::ControllerMap {{
+    shaperail_runtime::handlers::controller::ControllerMap::new()
+}}
 "#
     )
 }

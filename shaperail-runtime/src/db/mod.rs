@@ -2,6 +2,7 @@ mod filter;
 mod generated;
 mod manager;
 mod migration;
+#[cfg(feature = "multi-db")]
 mod mongo;
 mod orm_query;
 mod pagination;
@@ -18,6 +19,7 @@ pub use generated::{
 };
 pub use manager::{DatabaseManager, SqlConnection};
 pub use migration::{run_migrations, run_migrations_multi};
+#[cfg(feature = "multi-db")]
 pub use mongo::{MongoBackedStore, MongoConnection};
 pub use orm_query::OrmResourceQuery;
 pub use pagination::{decode_cursor, encode_cursor, CursorPage, OffsetPage, PageRequest};
@@ -27,9 +29,8 @@ pub use query::{
 };
 pub use search::SearchParam;
 pub use sort::{SortDirection, SortField, SortParam};
-pub use store::{
-    build_multi_store_registry, build_orm_store_registry, OrmBackedStore, ResourceStore,
-    StoreRegistry,
-};
+#[cfg(feature = "multi-db")]
+pub use store::build_multi_store_registry;
+pub use store::{build_orm_store_registry, OrmBackedStore, ResourceStore, StoreRegistry};
 
 pub use async_trait::async_trait;

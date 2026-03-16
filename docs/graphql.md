@@ -8,7 +8,13 @@ When you enable GraphQL, Shaperail exposes the same resources as your REST API o
 
 ## Enabling GraphQL
 
-In `shaperail.config.yaml`, add `graphql` to the `protocols` list:
+**Step 1.** Add the `graphql` feature flag to your project's `Cargo.toml`:
+
+```toml
+shaperail-runtime = { version = "0.6.0", default-features = false, features = ["graphql"] }
+```
+
+**Step 2.** In `shaperail.config.yaml`, add `graphql` to the `protocols` list:
 
 ```yaml
 project: my-app

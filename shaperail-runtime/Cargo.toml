@@ -10,6 +10,14 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = ["graphql", "grpc", "wasm-plugins", "multi-db", "observability-otlp"]
+graphql = ["dep:async-graphql", "dep:async-graphql-actix-web"]
+grpc = ["dep:tonic", "dep:prost", "dep:prost-types", "dep:tonic-reflection", "dep:tonic-health", "dep:tokio-stream", "dep:http-body", "dep:http-body-util", "dep:tower"]
+wasm-plugins = ["dep:wasmtime"]
+multi-db = ["dep:mongodb"]
+observability-otlp = ["dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk"]
+
 [dependencies]
 shaperail-core = { version = "0.6.0", path = "../shaperail-core" }
 actix-web = { workspace = true }
@@ -39,24 +47,34 @@ object_store = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 http = "1"
 tracing-subscriber = { workspace = true }
-tracing-opentelemetry = { workspace = true }
-opentelemetry = { workspace = true }
-opentelemetry-otlp = { workspace = true }
-opentelemetry_sdk = { workspace = true }
 prometheus = { workspace = true }
-async-graphql = { workspace = true }
-async-graphql-actix-web = { workspace = true }
-mongodb = { workspace = true }
-tonic = { workspace = true }
-prost = { workspace = true }
-prost-types = { workspace = true }
-tonic-reflection = { workspace = true }
-tonic-health = { workspace = true }
-tokio-stream = { workspace = true }
-http-body = "1"
-http-body-util = "0.1"
-tower = { version = "0.4", default-features = false }
-wasmtime = { workspace = true }
+
+# Optional: OpenTelemetry OTLP export (feature = "observability-otlp")
+tracing-opentelemetry = { workspace = true, optional = true }
+opentelemetry = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+
+# Optional: GraphQL (feature = "graphql")
+async-graphql = { workspace = true, optional = true }
+async-graphql-actix-web = { workspace = true, optional = true }
+
+# Optional: gRPC (feature = "grpc")
+tonic = { workspace = true, optional = true }
+prost = { workspace = true, optional = true }
+prost-types = { workspace = true, optional = true }
+tonic-reflection = { workspace = true, optional = true }
+tonic-health = { workspace = true, optional = true }
+tokio-stream = { workspace = true, optional = true }
+http-body = { version = "1", optional = true }
+http-body-util = { version = "0.1", optional = true }
+tower = { version = "0.4", default-features = false, optional = true }
+
+# Optional: MongoDB (feature = "multi-db")
+mongodb = { workspace = true, optional = true }
+
+# Optional: WASM plugins (feature = "wasm-plugins")
+wasmtime = { workspace = true, optional = true }
 
 [dev-dependencies]
 sqlx = { workspace = true, default-features = false, features = ["runtime-tokio", "postgres", "uuid", "chrono", "json", "migrate", "macros"] }

@@ -106,6 +106,13 @@ rust-version = "{RUST_TOOLCHAIN_VERSION}"
 build = "build.rs"
 
 [dependencies]
+# Core framework — default-features = false gives you REST + Postgres (Tier 1).
+# Enable optional features as needed:
+#   features = ["graphql"]       — GraphQL via async-graphql
+#   features = ["grpc"]          — gRPC via tonic
+#   features = ["wasm-plugins"]  — WASM controller hooks via wasmtime
+#   features = ["multi-db"]      — MongoDB support
+#   features = ["observability-otlp"] — OpenTelemetry OTLP export
 shaperail-runtime = {shaperail_runtime_dep}
 shaperail-core = {shaperail_core_dep}
 shaperail-codegen = {shaperail_codegen_dep}
@@ -125,7 +132,7 @@ dotenvy = "0.15"
 sqlx = {{ version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "migrate"] }}
 tokio = {{ version = "1", features = ["rt-multi-thread"] }}
 "#,
-        shaperail_runtime_dep = shaperail_dependency("shaperail-runtime"),
+        shaperail_runtime_dep = shaperail_dependency_no_defaults("shaperail-runtime"),
         shaperail_core_dep = shaperail_dependency("shaperail-core"),
         shaperail_codegen_dep = shaperail_dependency("shaperail-codegen")
     );
@@ -1017,16 +1024,19 @@ async fn main() -> std::io::Result<()> {
     let metrics_state = web::Data::new(
         MetricsState::new().map_err(|e| io_error(format!("Failed to initialize metrics: {e}")))?,
     );
+    let controllers = generated::build_controller_map();
+
     let state = Arc::new(AppState {
         pool: pool.clone(),
         resources: resources.clone(),
         stores: Some(stores),
-        controllers: None,
+        controllers: Some(controllers),
         jwt_config: jwt_config.clone(),
         cache,
         event_emitter,
         job_queue,
         metrics: Some(metrics_state.get_ref().clone()),
+        #[cfg(feature = "wasm-plugins")]
         wasm_runtime: None,
         event_bus: tokio::sync::broadcast::channel(256).0,
     });
@@ -1324,12 +1334,25 @@ fn write_file(path: &Path, content: &str) -> Result<(), String> {
 }
 
 fn shaperail_dependency(crate_name: &str) -> String {
+    shaperail_dependency_with_options(crate_name, true)
+}
+
+fn shaperail_dependency_no_defaults(crate_name: &str) -> String {
+    shaperail_dependency_with_options(crate_name, false)
+}
+
+fn shaperail_dependency_with_options(crate_name: &str, default_features: bool) -> String {
+    let df = if default_features {
+        String::new()
+    } else {
+        ", default-features = false".to_string()
+    };
     match std::env::var(DEV_WORKSPACE_ENV) {
         Ok(workspace_root) if !workspace_root.is_empty() => {
             let path = Path::new(&workspace_root).join(crate_name);
             let path = path.to_string_lossy().replace('\\', "\\\\");
-            format!(r#"{{ version = "{SHAPERAIL_VERSION}", path = "{path}" }}"#)
+            format!(r#"{{ version = "{SHAPERAIL_VERSION}", path = "{path}"{df} }}"#)
         }
-        _ => format!(r#"{{ version = "{SHAPERAIL_VERSION}" }}"#),
+        _ => format!(r#"{{ version = "{SHAPERAIL_VERSION}"{df} }}"#),
     }
 }

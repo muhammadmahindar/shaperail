@@ -4,12 +4,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 
+#[cfg(feature = "multi-db")]
 use super::mongo::{MongoBackedStore, MongoConnection};
 use super::{DatabaseManager, ResourceRow};
 use super::{FilterSet, OrmResourceQuery, PageRequest, SearchParam, SortParam, SqlConnection};
-use shaperail_core::{
-    DatabaseEngine, EndpointSpec, NamedDatabaseConfig, ResourceDefinition, ShaperailError,
-};
+#[cfg(feature = "multi-db")]
+use shaperail_core::{DatabaseEngine, NamedDatabaseConfig};
+use shaperail_core::{EndpointSpec, ResourceDefinition, ShaperailError};
 
 /// Typed resource store implemented by generated per-resource query modules or OrmBackedStore (M14).
 #[async_trait]
@@ -125,6 +126,7 @@ pub fn build_orm_store_registry(
     Ok(Arc::new(stores))
 }
 
+#[cfg(feature = "multi-db")]
 /// Builds a store registry supporting both SQL and MongoDB backends (M14 full multi-DB).
 ///
 /// Resources are routed to the appropriate backend based on their `db` field and the

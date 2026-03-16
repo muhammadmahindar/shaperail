@@ -78,10 +78,28 @@ Verify the generated surfaces:
 - `http://localhost:3000/health/ready` — readiness (DB + Redis)
 - `http://localhost:3000/v1/posts` — your first versioned API endpoint
 
-## Make your first change
+## Add a new resource
+
+Use the `resource create` command to scaffold a valid YAML file and migration:
+
+```bash
+shaperail resource create comments
+```
+
+Then edit `resources/comments.yaml` to add your fields and run:
+
+```bash
+shaperail validate
+shaperail migrate
+shaperail serve
+```
+
+Avoid editing files in `generated/` by hand — they are overwritten on every
+`shaperail generate` and `shaperail serve`.
+
+## Make changes to an existing resource
 
 Open `resources/posts.yaml` and change the schema or endpoint contract first.
-Avoid editing generated Rust files by hand.
 
 Useful commands while iterating:
 
@@ -122,8 +140,31 @@ shaperail serve
 | `shaperail migrate` fails | Install `sqlx-cli` and confirm `DATABASE_URL` points at the same local Postgres service |
 | Docs page loads but API calls fail | Confirm `.env`, Docker ports, and `DATABASE_URL` are aligned |
 
+## Optional features
+
+The scaffolded project includes only the Tier 1 stack: REST + Postgres + Redis.
+Advanced capabilities are available as Cargo feature flags on `shaperail-runtime`:
+
+| Feature | What it adds |
+| --- | --- |
+| `graphql` | GraphQL endpoint via async-graphql |
+| `grpc` | gRPC server via tonic |
+| `wasm-plugins` | WASM controller hooks via wasmtime |
+| `multi-db` | MongoDB backend support |
+| `observability-otlp` | OpenTelemetry OTLP span export |
+
+Enable them in your `Cargo.toml`:
+
+```toml
+shaperail-runtime = { version = "0.6.0", default-features = false, features = ["graphql"] }
+```
+
+See [GraphQL]({{ '/graphql/' | relative_url }}), [gRPC]({{ '/grpc/' | relative_url }}),
+and [Troubleshooting]({{ '/troubleshooting/' | relative_url }}) for details.
+
 ## Related pages
 
 - [CLI reference]({{ '/cli-reference/' | relative_url }})
 - [Resource guide]({{ '/resource-guide/' | relative_url }})
 - [Blog API example]({{ '/blog-api-example/' | relative_url }})
+- [Troubleshooting]({{ '/troubleshooting/' | relative_url }})

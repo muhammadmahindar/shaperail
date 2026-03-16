@@ -6,6 +6,7 @@ use std::sync::Arc;
 use shaperail_core::{ShaperailError, WASM_HOOK_PREFIX};
 
 use crate::auth::extractor::AuthenticatedUser;
+#[cfg(feature = "wasm-plugins")]
 use crate::plugins::{PluginContext, PluginUser, WasmRuntime};
 
 /// Context passed to controller functions for synchronous in-request business logic.
@@ -149,6 +150,7 @@ impl Default for ControllerMap {
 ///
 /// If `name` starts with `wasm:`, delegates to the WASM runtime.
 /// Otherwise, looks up and calls a registered Rust controller function.
+#[cfg(feature = "wasm-plugins")]
 pub async fn dispatch_controller(
     name: &str,
     resource: &str,
@@ -208,14 +210,44 @@ pub async fn dispatch_controller(
 
         Ok(())
     } else {
-        // Rust controller function
-        let map = controllers.ok_or_else(|| {
-            ShaperailError::Internal(format!(
-                "Controller '{name}' declared for '{resource}' but no ControllerMap configured"
-            ))
-        })?;
-        map.call(resource, name, ctx).await
+        dispatch_rust_controller(name, resource, ctx, controllers).await
     }
+}
+
+/// Dispatches a controller call (Rust controllers only, WASM disabled).
+///
+/// Any `wasm:` prefix controllers return an error explaining the feature is not enabled.
+#[cfg(not(feature = "wasm-plugins"))]
+pub async fn dispatch_controller(
+    name: &str,
+    resource: &str,
+    ctx: &mut Context,
+    controllers: Option<&ControllerMap>,
+    _wasm_runtime: Option<&()>,
+) -> ControllerResult {
+    if name.starts_with(WASM_HOOK_PREFIX) {
+        return Err(ShaperailError::Internal(
+            "WASM plugin declared but the 'wasm-plugins' feature is not enabled. \
+             Add `features = [\"wasm-plugins\"]` to your shaperail-runtime dependency."
+                .to_string(),
+        ));
+    }
+    dispatch_rust_controller(name, resource, ctx, controllers).await
+}
+
+/// Shared Rust controller dispatch used by both feature-gated variants.
+async fn dispatch_rust_controller(
+    name: &str,
+    resource: &str,
+    ctx: &mut Context,
+    controllers: Option<&ControllerMap>,
+) -> ControllerResult {
+    let map = controllers.ok_or_else(|| {
+        ShaperailError::Internal(format!(
+            "Controller '{name}' declared for '{resource}' but no ControllerMap configured"
+        ))
+    })?;
+    map.call(resource, name, ctx).await
 }
 
 #[cfg(test)]

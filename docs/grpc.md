@@ -8,7 +8,13 @@ When you enable gRPC, Shaperail exposes the same resources as your REST API over
 
 ## Enabling gRPC
 
-In `shaperail.config.yaml`, add `grpc` to the `protocols` list:
+**Step 1.** Add the `grpc` feature flag to your project's `Cargo.toml`:
+
+```toml
+shaperail-runtime = { version = "0.6.0", default-features = false, features = ["grpc"] }
+```
+
+**Step 2.** In `shaperail.config.yaml`, add `grpc` to the `protocols` list:
 
 ```yaml
 project: my-app

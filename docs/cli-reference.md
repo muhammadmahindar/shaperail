@@ -25,6 +25,7 @@ serve, then package.
 | `shaperail doctor` | Check system deps: Rust, PostgreSQL, Redis, sqlx-cli; print fix instructions. |
 | `shaperail routes` | Print all routes with auth requirements. |
 | `shaperail jobs:status [job_id]` | Show job queue depth and recent failures; or inspect a specific job by ID. |
+| `shaperail resource create <name>` | Scaffold a new resource YAML file and initial migration. |
 
 Every command supports `--help`.
 
@@ -57,7 +58,17 @@ Use `doctor` before the first install or if a teammate reports environment
 issues. Use `init` to create a project that is ready for Docker-first local
 development.
 
-### Authoring and validation
+### Resource authoring
+
+```bash
+shaperail resource create comments
+shaperail validate resources/comments.yaml
+```
+
+Use `resource create` to scaffold a valid starting point, then edit the YAML
+to add fields, endpoints, and relations.
+
+### Validation and inspection
 
 ```bash
 shaperail validate resources/posts.yaml

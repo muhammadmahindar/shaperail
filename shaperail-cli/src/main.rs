@@ -81,6 +81,20 @@ enum Commands {
         /// Optional job ID to inspect
         job_id: Option<String>,
     },
+    /// Manage resource files
+    Resource {
+        #[command(subcommand)]
+        action: ResourceAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ResourceAction {
+    /// Scaffold a new resource YAML file and initial migration
+    Create {
+        /// Resource name (plural, lowercase, e.g., "blog_posts")
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -133,6 +147,9 @@ fn main() {
         Commands::Doctor => commands::doctor::run(),
         Commands::Routes => commands::routes::run(),
         Commands::JobsStatus { job_id } => commands::jobs_status::run(job_id.as_deref()),
+        Commands::Resource { action } => match action {
+            ResourceAction::Create { name } => commands::resource::run_create(&name),
+        },
     };
 
     process::exit(exit_code);

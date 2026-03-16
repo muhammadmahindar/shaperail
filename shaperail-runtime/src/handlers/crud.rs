@@ -31,7 +31,8 @@ pub struct AppState {
     pub event_emitter: Option<EventEmitter>,
     pub job_queue: Option<JobQueue>,
     pub metrics: Option<MetricsState>,
-    /// WASM plugin runtime (M19).
+    /// WASM plugin runtime (M19). Requires `wasm-plugins` feature.
+    #[cfg(feature = "wasm-plugins")]
     pub wasm_runtime: Option<crate::plugins::WasmRuntime>,
     /// Broadcast channel for GraphQL subscriptions (M15). Sends event payloads to subscribers.
     pub event_bus: tokio::sync::broadcast::Sender<(String, serde_json::Value)>,
@@ -614,12 +615,16 @@ async fn run_before_controller(
         response_headers: vec![],
         tenant_id,
     };
+    #[cfg(feature = "wasm-plugins")]
+    let wasm_rt = state.wasm_runtime.as_ref();
+    #[cfg(not(feature = "wasm-plugins"))]
+    let wasm_rt = None;
     super::controller::dispatch_controller(
         name,
         &resource.resource,
         &mut ctx,
         state.controllers.as_ref(),
-        state.wasm_runtime.as_ref(),
+        wasm_rt,
     )
     .await?;
     Ok(ctx.input)
@@ -660,12 +665,16 @@ async fn run_after_controller(
         response_headers: vec![],
         tenant_id,
     };
+    #[cfg(feature = "wasm-plugins")]
+    let wasm_rt = state.wasm_runtime.as_ref();
+    #[cfg(not(feature = "wasm-plugins"))]
+    let wasm_rt = None;
     super::controller::dispatch_controller(
         name,
         &resource.resource,
         &mut ctx,
         state.controllers.as_ref(),
-        state.wasm_runtime.as_ref(),
+        wasm_rt,
     )
     .await?;
     Ok(ctx.data.unwrap_or(serde_json::Value::Null))

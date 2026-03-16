@@ -5,6 +5,7 @@ pub mod generate;
 pub mod init;
 pub mod jobs_status;
 pub mod migrate;
+pub mod resource;
 pub mod routes;
 pub mod seed;
 pub mod serve;
@@ -53,8 +54,7 @@ pub fn load_all_resources_from(resources_dir: &Path) -> Result<Vec<ResourceDefin
 
     let mut resources = Vec::new();
     for file in &files {
-        let rd = shaperail_codegen::parser::parse_resource_file(file)
-            .map_err(|e| format!("{}: {e}", file.display()))?;
+        let rd = shaperail_codegen::parser::parse_resource_file(file).map_err(|e| e.to_string())?;
         let validation_errors = shaperail_codegen::validator::validate_resource(&rd);
         if !validation_errors.is_empty() {
             let rendered = validation_errors

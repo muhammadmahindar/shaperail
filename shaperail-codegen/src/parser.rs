@@ -11,6 +11,13 @@ pub enum ParseError {
 
     #[error("{0}")]
     ConfigInterpolation(String),
+
+    #[error("{file}: {source}")]
+    Context {
+        file: String,
+        #[source]
+        source: Box<ParseError>,
+    },
 }
 
 /// Parse a YAML string into a `ResourceDefinition`.
@@ -20,9 +27,14 @@ pub fn parse_resource(yaml: &str) -> Result<ResourceDefinition, ParseError> {
 }
 
 /// Parse a resource YAML file from disk.
+///
+/// Wraps parse errors with the filename for clearer diagnostics.
 pub fn parse_resource_file(path: &std::path::Path) -> Result<ResourceDefinition, ParseError> {
     let content = std::fs::read_to_string(path)?;
-    parse_resource(&content)
+    parse_resource(&content).map_err(|e| ParseError::Context {
+        file: path.display().to_string(),
+        source: Box::new(e),
+    })
 }
 
 #[cfg(test)]
@@ -117,5 +129,33 @@ schema:
         let rd = parse_resource(yaml).unwrap();
         assert_eq!(rd.resource, "events");
         assert_eq!(rd.db.as_deref(), Some("analytics"));
+    }
+
+    #[test]
+    fn parse_resource_file_includes_filename_in_error() {
+        let path = std::path::Path::new("nonexistent/resource.yaml");
+        let err = parse_resource_file(path).unwrap_err();
+        // IO error for missing file — no Context wrapper needed
+        assert!(matches!(err, ParseError::Io(_)));
+    }
+
+    #[test]
+    fn parse_resource_file_context_wraps_yaml_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.yaml");
+        std::fs::write(&path, "resource: test\nunknown_key: true\n").unwrap();
+
+        let err = parse_resource_file(&path).unwrap_err();
+        let msg = err.to_string();
+        // Error message should contain the filename
+        assert!(
+            msg.contains("bad.yaml"),
+            "Expected filename in error, got: {msg}"
+        );
+        // And also the actual parse error
+        assert!(
+            msg.contains("unknown field"),
+            "Expected parse error detail, got: {msg}"
+        );
     }
 }

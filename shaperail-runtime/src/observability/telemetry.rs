@@ -8,7 +8,10 @@ use shaperail_core::ShaperailError;
 ///
 /// If `OTEL_EXPORTER_OTLP_ENDPOINT` is not set, telemetry is disabled (no-op).
 ///
+/// When the `observability-otlp` feature is disabled, this function always returns `Ok(None)`.
+///
 /// Spans are created for: HTTP requests, DB queries, cache operations, job execution.
+#[cfg(feature = "observability-otlp")]
 pub fn init_telemetry(
 ) -> Result<Option<opentelemetry_sdk::trace::SdkTracerProvider>, ShaperailError> {
     let endpoint = match std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
@@ -43,7 +46,14 @@ pub fn init_telemetry(
     Ok(Some(provider))
 }
 
+/// No-op when `observability-otlp` feature is disabled.
+#[cfg(not(feature = "observability-otlp"))]
+pub fn init_telemetry() -> Result<Option<()>, ShaperailError> {
+    Ok(None)
+}
+
 /// Shuts down the OpenTelemetry tracer provider, flushing pending spans.
+#[cfg(feature = "observability-otlp")]
 pub fn shutdown_telemetry(provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>) {
     if let Some(provider) = provider {
         if let Err(e) = provider.force_flush() {
@@ -55,6 +65,10 @@ pub fn shutdown_telemetry(provider: Option<opentelemetry_sdk::trace::SdkTracerPr
         }
     }
 }
+
+/// No-op when `observability-otlp` feature is disabled.
+#[cfg(not(feature = "observability-otlp"))]
+pub fn shutdown_telemetry(_provider: Option<()>) {}
 
 /// Records an OpenTelemetry span for a database query.
 ///

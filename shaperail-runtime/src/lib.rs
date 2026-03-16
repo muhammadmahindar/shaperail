@@ -2,11 +2,14 @@ pub mod auth;
 pub mod cache;
 pub mod db;
 pub mod events;
+#[cfg(feature = "graphql")]
 pub mod graphql;
+#[cfg(feature = "grpc")]
 pub mod grpc;
 pub mod handlers;
 pub mod jobs;
 pub mod observability;
+#[cfg(feature = "wasm-plugins")]
 pub mod plugins;
 pub mod registry;
 pub mod storage;
