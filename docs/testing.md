@@ -160,9 +160,7 @@ async fn test_set_created_by_rejects_unauthenticated() {
 
     assert!(result.is_err());
     match result.unwrap_err() {
-        ShaperailError::Auth(msg) => {
-            assert!(msg.contains("No authenticated user"));
-        }
+        ShaperailError::Unauthorized => {}
         other => panic!("Expected Auth error, got: {:?}", other),
     }
 }
@@ -181,7 +179,7 @@ async fn test_admin_only_fields_strips_role_for_non_admin() {
         "org_id": "org-1"
     }));
     ctx.user = Some(AuthenticatedUser {
-        user_id: "user-1".into(),
+        id: "user-1".into(),
         role: "member".into(),
         tenant_id: None,
     });
@@ -341,7 +339,7 @@ async fn test_auth_rejects_wrong_role(pool: sqlx::PgPool) {
     // Generate a token with "viewer" role
     let jwt = JwtConfig::new("test-secret-key-at-least-32-bytes-long!", 3600, 86400);
     let token = jwt
-        .generate_access_token("user-1", "viewer", None)
+        .encode_access("user-1", "viewer")
         .expect("generate token");
 
     let req = actix_test::TestRequest::post()

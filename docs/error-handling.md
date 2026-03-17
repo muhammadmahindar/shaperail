@@ -234,7 +234,7 @@ pub async fn owner_only(ctx: &mut Context) -> ControllerResult {
     if user.role != "admin" {
         // Non-admins can only modify their own records
         let record_owner = ctx.input.get("user_id").and_then(|v| v.as_str());
-        if record_owner != Some(&user.user_id) {
+        if record_owner != Some(user.id.as_str()) {
             return Err(ShaperailError::Forbidden);
         }
     }
@@ -265,7 +265,7 @@ directly on sqlx calls inside controllers:
 ```rust
 pub async fn check_quota(ctx: &mut Context) -> ControllerResult {
     let user_id = ctx.user.as_ref()
-        .map(|u| &u.user_id)
+        .map(|u| u.id.as_str())
         .ok_or(ShaperailError::Unauthorized)?;
 
     let count: i64 = sqlx::query_scalar(
@@ -521,10 +521,10 @@ Output looks like:
 
 ```bash
 # Fail the build if any resource has errors
-shaperail check --format json | jq -e 'length == 0'
+shaperail check --json | jq -e 'length == 0'
 ```
 
-The `--format json` flag outputs an array of diagnostic objects, each with
+The `--json` flag outputs an array of diagnostic objects, each with
 `code`, `error`, `fix`, and `example` fields. This is designed for AI tools and
 CI pipelines that need machine-readable output.
 

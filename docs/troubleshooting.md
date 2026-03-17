@@ -166,7 +166,7 @@ shaperail serve   # applies pending migrations on startup
 Or apply manually:
 
 ```bash
-shaperail migrate --apply
+DATABASE_URL=postgresql://user:pass@host:5432/db shaperail migrate
 ```
 
 ## JWT and auth errors
@@ -284,8 +284,10 @@ endpoints:
     jobs: [send_welcome_email]
 ```
 
-4. **Job handler exists:** a file at `jobs/send_welcome_email.rs` or a
-   matching handler is registered
+4. **A worker is actually running:** the scaffold does not start a job worker
+   automatically
+5. **A matching handler is registered:** the worker's `JobRegistry` includes
+   `send_welcome_email`
 
 ### Jobs stuck in pending
 
@@ -294,6 +296,7 @@ shaperail jobs:status
 ```
 
 If jobs stay in `pending`:
+- No worker may have been started at all. The default scaffold only enqueues.
 - The worker may have crashed. Check application logs.
 - Redis may be unreachable. Test with `redis-cli ping`.
 - The job may be scheduled for a future time.
@@ -304,14 +307,12 @@ Jobs that fail are retried according to their retry policy. After exhausting
 retries, they move to the dead letter queue. Check:
 
 ```bash
-shaperail jobs:status --dead
+shaperail jobs:status
 ```
 
-Fix the underlying error, then re-queue:
-
-```bash
-shaperail jobs:retry --dead
-```
+There is no built-in `jobs:retry` command today. Fix the handler or dependency
+problem, then re-enqueue the job from the application path that created it or
+manually inspect the Redis dead-letter payload.
 
 ### Job timeout
 
@@ -377,13 +378,14 @@ Files in `generated/` are overwritten on every `shaperail generate` and
 error: controller function `validate_org` not found
 ```
 
-The resource declares a controller but the implementation file is missing.
-Create `resources/users.controller.rs` with the expected function signature:
+The resource declares a controller, but the function is not registered in the
+controller map or the signature does not match. Create a controller module with
+the expected signature and register it with `ControllerMap::register(...)`:
 
 ```rust
-use shaperail_runtime::ControllerContext;
+use shaperail_runtime::handlers::controller::{Context, ControllerResult};
 
-pub async fn validate_org(ctx: &mut ControllerContext) -> Result<(), shaperail_core::ShaperailError> {
+pub async fn validate_org(ctx: &mut Context) -> ControllerResult {
     // your logic here
     Ok(())
 }
@@ -408,10 +410,10 @@ appear, check your `Cargo.toml`:
 
 ```toml
 # This won't work -- graphql feature is not enabled:
-shaperail-runtime = { version = "0.6.0", default-features = false }
+shaperail-runtime = { version = "0.7.0", default-features = false }
 
 # This will:
-shaperail-runtime = { version = "0.6.0", default-features = false, features = ["graphql"] }
+shaperail-runtime = { version = "0.7.0", default-features = false, features = ["graphql"] }
 ```
 
 ### WASM plugins silently ignored
@@ -420,27 +422,27 @@ If your resource declares `controller: { before: "wasm:plugins/hook.wasm" }`
 but the hook doesn't run, enable the feature:
 
 ```toml
-shaperail-runtime = { version = "0.6.0", default-features = false, features = ["wasm-plugins"] }
+shaperail-runtime = { version = "0.7.0", default-features = false, features = ["wasm-plugins"] }
 ```
 
 Without the feature, WASM prefixed controllers return an error at runtime.
 
 ### Multi-database not working
 
-If you set `db: mongodb` on a resource but get a compile error:
+If you enable the `multi-db` feature and route resources through named
+connections, remember that the generated bootstrap only wires SQL engines
+(`postgres`, `mysql`, `sqlite`) automatically:
 
 ```toml
-shaperail-runtime = { version = "0.6.0", features = ["multi-db"] }
+shaperail-runtime = { version = "0.7.0", features = ["multi-db"] }
 ```
 
-### Feature enabled but trait not implemented
+If you configure a named database with `engine: mongodb`, the runtime has
+Mongo-backed store primitives behind the feature flag, but the scaffolded app
+does not build the mixed SQL + Mongo store registry for you yet.
 
-```
-error[E0277]: the trait bound `MongoBackend: DatabaseBackend` is not satisfied
-```
-
-This means the feature is enabled but the version of `shaperail-runtime` does
-not support it yet. Check the changelog for minimum version requirements.
+Use named SQL connections out of the box, or add manual bootstrap code for
+Mongo-backed stores.
 
 ## Available features
 
@@ -449,7 +451,7 @@ not support it yet. Check the changelog for minimum version requirements.
 | `graphql` | `POST /graphql` endpoint via async-graphql |
 | `grpc` | gRPC server via tonic on a separate port |
 | `wasm-plugins` | WASM controller hooks via wasmtime |
-| `multi-db` | MongoDB backend for resources with `db:` key |
+| `multi-db` | Named multi-database runtime support; scaffolded apps wire SQL engines automatically |
 | `observability-otlp` | OpenTelemetry OTLP span export |
 
 All features are enabled by default when you don't specify `default-features = false`.

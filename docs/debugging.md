@@ -195,23 +195,33 @@ the full request path across services.
 
 ### Adding tracing to before/after hooks
 
-Controllers are defined in `resources/<name>.controller.rs`. Add `tracing`
-instrumentation to see when hooks fire:
+One common convention is `resources/<name>.controller.rs`, but current
+generated apps still require manual controller registration. Add `tracing`
+instrumentation to the registered function to see when hooks fire:
 
 ```rust
+use shaperail_core::{FieldError, ShaperailError};
+use shaperail_runtime::handlers::controller::{Context, ControllerResult};
 use tracing::{debug, info};
 
-pub async fn validate_org(ctx: &mut ControllerContext) -> Result<(), ShaperailError> {
+pub async fn validate_org(ctx: &mut Context) -> ControllerResult {
     debug!(org_id = %ctx.input["org_id"], "validate_org: checking org exists");
 
-    let org_exists = ctx.db
-        .query_optional("SELECT id FROM organizations WHERE id = $1", &[&ctx.input["org_id"]])
+    let org_exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM organizations WHERE id = $1)"
+    )
+        .bind(ctx.input["org_id"].as_str().unwrap_or_default())
+        .fetch_one(&ctx.pool)
         .await?
-        .is_some();
+        .unwrap_or(false);
 
     if !org_exists {
         info!(org_id = %ctx.input["org_id"], "validate_org: org not found, rejecting");
-        return Err(ShaperailError::validation("org_id", "organization does not exist"));
+        return Err(ShaperailError::Validation(vec![FieldError {
+            field: "org_id".into(),
+            message: "organization does not exist".into(),
+            code: "invalid_reference".into(),
+        }]));
     }
 
     debug!("validate_org: passed");
@@ -230,8 +240,8 @@ With `RUST_LOG=debug`, this produces:
 
 - **Controller not running** -- verify the resource YAML declares it:
   `controller: { before: validate_org }`.
-- **Controller file not found** -- the file must be at
-  `resources/<resource_name>.controller.rs`.
+- **Controller not registered** -- current apps do not auto-discover controller
+  files; verify your bootstrap registers the function name declared in YAML.
 - **WASM controller not loading** -- check that the `wasm-plugins` feature is
   enabled in `Cargo.toml`. See [Troubleshooting]({{ '/troubleshooting/' | relative_url }}).
 
@@ -431,15 +441,17 @@ shaperail diff
 Example output:
 
 ```
-generated/handlers/users.rs
-  + pub async fn list_users(...)  → new handler
-  ~ pub async fn create_user(...) → modified (added controller hook)
+--- generated/mod.rs
++++ generated/mod.rs (regenerated)
+18 lines changed (+9 -9)
 
-generated/migrations/003_add_role_index.sql
-  + CREATE INDEX idx_users_org_id_role ON users (org_id, role);
+--- generated/users.rs
++++ generated/users.rs (regenerated)
+42 lines changed (+21 -21)
 
-generated/openapi.json
-  ~ paths./v1/users.get → added cache header docs
+--- /dev/null
++++ generated/orders.rs
+(new file, 118 lines)
 ```
 
 This is useful for:
@@ -487,7 +499,8 @@ export REDIS_URL=redis://localhost:6379
 
 ### Controller hook not executing
 
-**Cause**: the controller file is missing or the function name does not match.
+**Cause**: the function is not registered in the controller map, or the
+registered name does not match the YAML.
 
 **Fix**:
 
@@ -495,11 +508,11 @@ export REDIS_URL=redis://localhost:6379
 # Check the resource declares the controller
 shaperail explain resources/users.yaml | grep controller
 
-# Check the file exists
-ls resources/users.controller.rs
+# Check the function name matches what the YAML declares
+rg "pub async fn validate_org" src resources
 
-# Check the function name matches
-grep "pub async fn validate_org" resources/users.controller.rs
+# Check your bootstrap registers the function name
+rg 'register\\("users", "validate_org"' src generated
 ```
 
 ### Jobs stuck in pending
@@ -511,12 +524,13 @@ grep "pub async fn validate_org" resources/users.controller.rs
 ```bash
 shaperail jobs:status         # check queue depth
 redis-cli PING                # verify Redis connectivity
-RUST_LOG=debug shaperail serve  # look for job worker startup logs
+RUST_LOG=debug shaperail serve  # confirm jobs are being enqueued
 ```
 
-The job worker starts automatically with `shaperail serve`. If you see no
-"job worker started" message at `debug` level, check that at least one resource
-declares `jobs:` on an endpoint.
+The scaffolded app does not start a job worker automatically. `shaperail serve`
+can enqueue jobs, but processing requires a separately wired worker plus a job
+handler registry. If you added that worker yourself, start it with
+`RUST_LOG=debug` and inspect the consumer logs there.
 
 ### Generated code does not compile
 

@@ -12,7 +12,7 @@ docker compose up -d
 shaperail serve
 ```
 
-With Docker running, Shaperail scaffolds a working CRUD API with preconfigured Postgres + Redis, health checks, browser docs, OpenAPI export, auth rules, Redis-backed cache/jobs plumbing, and observability endpoints from a single YAML file.
+With Docker running, Shaperail scaffolds a working CRUD API with preconfigured Postgres + Redis, health checks, browser docs, OpenAPI export, JWT auth, Redis-backed cache/queue plumbing, and observability endpoints from a single YAML file.
 
 ---
 
@@ -53,7 +53,7 @@ and a model.
 | Rust backends need too much boilerplate | Zero boilerplate — schema is the source of truth |
 | Frameworks are opinionated but inflexible | Explicit over implicit — nothing runs unless you declare it |
 | Performance requires manual optimization | 150K+ req/s out of the box, Redis caching built-in |
-| Auth/jobs/events are always custom | JWT, RBAC, background jobs, webhooks — all declarative |
+| Auth/jobs/events are always custom | JWT auth and CRUD are scaffolded; queue, event, and webhook primitives stay explicit and code-visible |
 
 ## Quick Start
 
@@ -94,7 +94,7 @@ my-app/
 ├── README.md           # Quickstart + local docs URLs
 ├── resources/          # Your API definitions (YAML)
 ├── migrations/         # Auto-generated SQL migrations
-├── channels/           # WebSocket channel definitions
+├── channels/           # WebSocket/channel definitions (manual route wiring today)
 ├── generated/          # Auto-generated Rust code (don't edit)
 ├── shaperail.config.yaml   # Project configuration
 ├── docker-compose.yml  # Postgres + Redis for local dev
@@ -173,7 +173,7 @@ indexes:
 ```bash
 docker compose up -d    # start Postgres + Redis and create the app database
 shaperail generate          # generate Rust code from YAML
-shaperail migrate           # create new migration files after schema changes
+shaperail migrate           # generate missing initial migrations and apply SQL files
 shaperail serve             # apply existing migrations and start the dev server
 ```
 
@@ -184,22 +184,22 @@ Your API is live at `http://localhost:3000`:
 
 ```bash
 # List users (with cursor pagination)
-curl http://localhost:3000/users
+curl http://localhost:3000/v1/users
 
 # Create a user
-curl -X POST http://localhost:3000/users \
+curl -X POST http://localhost:3000/v1/users \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"email": "alice@example.com", "name": "Alice", "org_id": "..."}'
 
 # Filter + search + sort
-curl "http://localhost:3000/users?filter[role]=admin&search=alice&sort=-created_at"
+curl "http://localhost:3000/v1/users?filter[role]=admin&search=alice&sort=-created_at"
 
 # Field selection
-curl "http://localhost:3000/users?fields=name,email"
+curl "http://localhost:3000/v1/users?fields=name,email"
 
 # Include relations
-curl "http://localhost:3000/users?include=organization"
+curl "http://localhost:3000/v1/users?include=organization"
 ```
 
 ---
@@ -276,7 +276,8 @@ schema:
 
 ### Authentication & Authorization
 
-Shaperail supports JWT and API key authentication out of the box.
+JWT auth is scaffolded in generated apps. API key auth and rate limiting exist
+in the runtime, but require manual wiring in the generated bootstrap.
 
 ```yaml
 endpoints:
@@ -288,11 +289,11 @@ endpoints:
     auth: public               # no authentication required
 ```
 
-**JWT**: Pass `Authorization: Bearer <token>` header. Configure with `JWT_SECRET` env var.
+**JWT**: Pass `Authorization: Bearer <token>` header. The scaffold reads `JWT_SECRET`.
 
-**API Keys**: Pass `X-API-Key` header. Alternative to JWT for service-to-service calls.
+**API Keys**: Pass `X-API-Key` header after you inject an `ApiKeyStore` into the app.
 
-**Rate Limiting**: Sliding window per IP + per token via Redis. Configurable per endpoint.
+**Rate Limiting**: Redis-backed limiter primitives exist in the runtime, but the scaffold does not enable them automatically.
 
 ### Caching
 
@@ -312,7 +313,7 @@ endpoints:
 
 ### Background Jobs
 
-Redis-backed job queue with priorities and retries:
+Redis-backed job queue primitives with priorities and retries:
 
 ```yaml
 endpoints:
@@ -326,11 +327,14 @@ endpoints:
 - **Job status**: query by job ID (pending/running/completed/failed)
 - **Timeout**: auto-fail jobs exceeding configured duration
 
-Monitor with: `shaperail jobs:status`
+Write endpoints can enqueue these jobs automatically, but you still need to
+register handlers and start a worker process yourself.
+
+Monitor queue state with: `shaperail jobs:status`
 
 ### Events & Webhooks
 
-Declarative event system with webhook delivery:
+Declarative event emission with webhook and broadcast targets:
 
 ```yaml
 endpoints:
@@ -354,15 +358,13 @@ events:
           room: "org:{org_id}"
 ```
 
-- Events never block HTTP responses (async via job queue)
-- Outbound webhooks signed with HMAC-SHA256: `X-Shaperail-Signature: sha256=...`
-- Webhook retry: 3 attempts with exponential backoff
-- Full event log for audit and replay
-- Inbound webhook verification (Stripe/GitHub patterns)
+- Writes can enqueue event work without blocking HTTP responses
+- Outbound webhook requests can be signed with HMAC-SHA256
+- Subscriber execution, webhook delivery handlers, and inbound webhook routes still require manual worker/route wiring
 
 ### WebSockets
 
-Real-time channels with room-based subscriptions:
+WebSocket session/channel primitives with room-based subscriptions:
 
 Create `channels/notifications.channel.yaml`:
 
@@ -376,15 +378,15 @@ hooks:
   on_message: [validate_message]
 ```
 
-Client connects to `ws://localhost:3000/ws/notifications` with JWT, then:
+If you wire the route yourself, a typical client connects to
+`ws://localhost:3000/ws/notifications` with JWT, then:
 
 ```json
 { "action": "subscribe", "room": "org:123" }
 ```
 
-- Redis pub/sub backend for multi-instance broadcast
-- Heartbeat with auto-disconnect for unresponsive clients
-- Lifecycle hooks: `on_connect`, `on_disconnect`, `on_message`
+- The runtime includes heartbeat, room, and lifecycle-hook primitives
+- The scaffold does not auto-load `channels/*.channel.yaml` or register `/ws/...` routes
 
 ### File Storage
 
@@ -451,7 +453,7 @@ relations:
 Load relations via query parameter:
 
 ```bash
-curl "http://localhost:3000/users/123?include=organization"
+curl "http://localhost:3000/v1/users/123?include=organization"
 ```
 
 ### Indexes
@@ -483,7 +485,7 @@ endpoints:
 ```json
 {
   "data": [...],
-  "meta": { "page": 1, "per_page": 25, "total": 150 }
+  "meta": { "offset": 0, "limit": 25, "total": 150 }
 }
 ```
 
@@ -510,7 +512,7 @@ Soft-deleted records are automatically excluded from queries.
 | `shaperail build --docker` | Build scratch-based Docker image |
 | `shaperail validate` | Validate all resource files |
 | `shaperail test` | Run generated + custom tests |
-| `shaperail migrate` | Generate + apply SQL migrations |
+| `shaperail migrate` | Generate missing initial migrations and apply SQL files |
 | `shaperail migrate --rollback` | Rollback last migration batch |
 | `shaperail seed` | Load fixture YAML files into database |
 | `shaperail export openapi` | Export OpenAPI 3.1 spec |

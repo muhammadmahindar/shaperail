@@ -7,8 +7,10 @@ nav_order: 11
 # Observability
 
 Shaperail provides built-in structured logging, Prometheus metrics, health
-checks, and OpenTelemetry distributed tracing. Everything is wired
-automatically when you run `shaperail serve` -- no manual setup required.
+checks, and OpenTelemetry distributed tracing. Structured logs, metrics, and
+health checks are scaffolded automatically when you run `shaperail serve`.
+OTLP export still depends on the feature being enabled and the relevant env vars
+being set.
 
 ---
 
@@ -21,7 +23,7 @@ a single request.
 Example output:
 
 ```json
-{"timestamp":"2026-03-13T12:00:00Z","level":"INFO","request_id":"abc-123","target":"shaperail_runtime::handlers","message":"GET /users 200 12ms"}
+{"timestamp":"2026-03-13T12:00:00Z","level":"INFO","request_id":"abc-123","target":"shaperail_runtime::handlers","message":"GET /v1/users 200 12ms"}
 ```
 
 ### Log level control

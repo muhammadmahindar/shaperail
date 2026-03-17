@@ -117,6 +117,10 @@ shaperail routes
 shaperail export openapi --output openapi.json
 ```
 
+If you are changing an existing table rather than adding a brand-new resource,
+remember that follow-up migration SQL is still manual today. `shaperail
+migrate` only generates missing initial create-table migrations automatically.
+
 ## Load seed data
 
 If you have fixture files in a `seeds/` directory, load them after migration:
@@ -158,13 +162,13 @@ Advanced capabilities are available as Cargo feature flags on `shaperail-runtime
 | `graphql` | GraphQL endpoint via async-graphql |
 | `grpc` | gRPC server via tonic |
 | `wasm-plugins` | WASM controller hooks via wasmtime |
-| `multi-db` | MongoDB backend support |
+| `multi-db` | Named multi-database runtime support; scaffolded apps wire SQL engines automatically |
 | `observability-otlp` | OpenTelemetry OTLP span export |
 
 Enable them in your `Cargo.toml`:
 
 ```toml
-shaperail-runtime = { version = "0.6.0", default-features = false, features = ["graphql"] }
+shaperail-runtime = { version = "0.7.0", default-features = false, features = ["graphql"] }
 ```
 
 See [GraphQL]({{ '/graphql/' | relative_url }}), [gRPC]({{ '/grpc/' | relative_url }}),

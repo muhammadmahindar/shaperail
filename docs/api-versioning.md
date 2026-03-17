@@ -135,19 +135,22 @@ endpoints:
     controller: { after: map_v1_response }
 ```
 
-In `resources/users_v1.controller.rs`:
+In `resources/users_v1.controller.rs` using the same manual registration pattern
+described in the [Controllers guide]({{ '/controllers/' | relative_url }}):
 
 ```rust
-use shaperail_runtime::ControllerContext;
+use shaperail_runtime::handlers::controller::{Context, ControllerResult};
 
-pub async fn map_v1_response(ctx: &mut ControllerContext) -> Result<(), shaperail_core::ShaperailError> {
+pub async fn map_v1_response(ctx: &mut Context) -> ControllerResult {
     // Combine first_name + last_name into a single "name" field for v1 clients
-    if let Some(data) = ctx.response_data_mut() {
-        let first = data.get("first_name").and_then(|v| v.as_str()).unwrap_or("");
-        let last = data.get("last_name").and_then(|v| v.as_str()).unwrap_or("");
-        data.insert("name".into(), format!("{first} {last}").into());
-        data.remove("first_name");
-        data.remove("last_name");
+    if let Some(data) = &mut ctx.data {
+        if let Some(obj) = data.as_object_mut() {
+            let first = obj.get("first_name").and_then(|v| v.as_str()).unwrap_or("");
+            let last = obj.get("last_name").and_then(|v| v.as_str()).unwrap_or("");
+            obj.insert("name".into(), serde_json::json!(format!("{first} {last}")));
+            obj.remove("first_name");
+            obj.remove("last_name");
+        }
     }
     Ok(())
 }
@@ -160,10 +163,13 @@ pub async fn map_v1_response(ctx: &mut ControllerContext) -> Result<(), shaperai
 Use a controller to add deprecation headers to v1 responses:
 
 ```rust
-pub async fn deprecation_header(ctx: &mut ControllerContext) -> Result<(), shaperail_core::ShaperailError> {
-    ctx.set_response_header("Deprecation", "true");
-    ctx.set_response_header("Sunset", "2026-06-01");
-    ctx.set_response_header("Link", "</v2/users>; rel=\"successor-version\"");
+pub async fn deprecation_header(ctx: &mut Context) -> ControllerResult {
+    ctx.response_headers.push(("Deprecation".into(), "true".into()));
+    ctx.response_headers.push(("Sunset".into(), "2026-06-01".into()));
+    ctx.response_headers.push((
+        "Link".into(),
+        "</v2/users>; rel=\"successor-version\"".into(),
+    ));
     Ok(())
 }
 ```
@@ -186,10 +192,10 @@ endpoints:
 Add a `before` controller that logs a warning when v1 is hit:
 
 ```rust
-pub async fn log_v1_usage(ctx: &mut ControllerContext) -> Result<(), shaperail_core::ShaperailError> {
+pub async fn log_v1_usage(ctx: &mut Context) -> ControllerResult {
     tracing::warn!(
-        path = %ctx.request_path(),
-        client = %ctx.client_id().unwrap_or("unknown"),
+        request_id = ?ctx.headers.get("x-request-id"),
+        user_agent = ?ctx.headers.get("user-agent"),
         "Deprecated v1 API called"
     );
     Ok(())
@@ -227,32 +233,12 @@ Timeline example:
 | Migration window | Weeks 1-8 | Deprecated | Active |
 | Sunset v1 | Week 9 | Removed | Active |
 
-### Strategy 2: Version bump with redirect
+### Strategy 2: Redirect outside Shaperail
 
-If the v2 schema is backward-compatible (only additive changes), redirect v1
-clients:
-
-```yaml
-# users_v1.yaml — minimal file that redirects
-resource: users
-version: 1
-
-endpoints:
-  list:
-    auth: public
-    controller: { before: redirect_to_v2 }
-  get:
-    auth: public
-    controller: { before: redirect_to_v2 }
-```
-
-```rust
-pub async fn redirect_to_v2(ctx: &mut ControllerContext) -> Result<(), shaperail_core::ShaperailError> {
-    let new_path = ctx.request_path().replacen("/v1/", "/v2/", 1);
-    ctx.redirect(301, &new_path);
-    Ok(())
-}
-```
+HTTP redirects between API versions are not exposed through the current
+controller `Context`. If you want `/v1/...` to 301/302 to `/v2/...`, add that
+behavior in your reverse proxy or custom Actix route layer instead of a
+Shaperail controller.
 
 ### Strategy 3: Single version, additive changes only
 

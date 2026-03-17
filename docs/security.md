@@ -100,6 +100,12 @@ auth:
 The `secret_env` field names an environment variable -- the secret itself never
 appears in the config file or source control.
 
+Current implementation note: the scaffolded app currently reads JWT settings
+from the `JWT_SECRET` environment variable directly and uses built-in 24h
+access / 30d refresh defaults. The `auth:` block above is parsed and validated,
+but its `secret_env`, `expiry`, and `refresh_expiry` values are not consumed by
+the generated bootstrap unless you wire that yourself.
+
 ### Secret strength
 
 Use a cryptographically random secret of at least 256 bits (32 bytes). Generate
@@ -119,8 +125,8 @@ it as `JWT_SECRET` at deploy time.
 | Access token  | 15 minutes -- 1 hour | Short-lived tokens limit the blast radius of a stolen token |
 | Refresh token | 7 -- 30 days       | Allows re-authentication without passwords; revoke on logout |
 
-Set `expiry` as short as your UX allows. The framework accepts duration strings
-like `15m`, `1h`, `24h`, `7d`, `30d`.
+If you customize the bootstrap to read `auth.expiry`, keep access tokens as
+short-lived as your UX allows.
 
 ### Secret rotation
 
@@ -159,6 +165,10 @@ with either the old or new secret during the transition window.
 API keys are sent via the `X-API-Key` header and map to a user ID and role.
 They are checked only when no Bearer token is present.
 
+Current implementation note: API key auth is a runtime primitive. It works only
+when you inject an `ApiKeyStore` into the Actix app. The scaffolded app does
+not do this automatically.
+
 ### Key rotation
 
 - Give each API key a human-readable label and creation timestamp.
@@ -180,8 +190,9 @@ service that only reads data should have a `viewer` or `member` role, not
 
 ### How it works
 
-Shaperail uses a Redis-backed sliding window rate limiter. Default: 100 requests
-per 60-second window. When exceeded, the response is `429 Rate Limited`.
+Shaperail includes a Redis-backed sliding window rate limiter primitive. When
+wired into request handling, the default is 100 requests per 60-second window
+and over-limit requests return `429 Rate Limited`.
 
 Rate limit keys follow this priority:
 
@@ -192,6 +203,10 @@ Rate limit keys follow this priority:
 | Unauthenticated        | `ip:<address>`                       |
 
 Rate limit state is stored in Redis and survives server restarts.
+
+Current implementation note: the scaffolded app does not enable the rate
+limiter automatically. If you need application-level rate limiting today, you
+must wire the `RateLimiter` into your server bootstrap yourself.
 
 ### Tuning limits
 
@@ -417,8 +432,8 @@ Never issue `super_admin` tokens to end users or external API consumers. Audit
 
 ### Outbound webhook signing
 
-Shaperail signs every outbound webhook delivery with HMAC-SHA256. The signature
-is sent in the `X-Shaperail-Signature` header:
+Shaperail includes an outbound webhook signing helper that produces
+`X-Shaperail-Signature: sha256=<hex>`:
 
 ```
 X-Shaperail-Signature: sha256=<hex-encoded HMAC-SHA256 digest>
@@ -433,6 +448,10 @@ events:
     timeout_secs: 30
     max_retries: 3
 ```
+
+Current implementation note: the runtime can build signed webhook requests, but
+the scaffolded app does not register a real delivery handler for queued webhook
+jobs. Actual HTTP delivery is still a manual worker integration step.
 
 ### Verifying outbound webhooks (receiver side)
 
@@ -455,8 +474,8 @@ attacks.
 
 ### Inbound webhook verification
 
-Shaperail verifies inbound webhooks automatically. Configure each source with
-its own secret:
+The runtime includes inbound webhook verification helpers. Configure each source
+with its own secret:
 
 ```yaml
 events:
@@ -477,7 +496,8 @@ Supported signature formats:
 | GitHub     | `X-Hub-Signature-256`   | `sha256=<hex>`                 |
 | Stripe     | `Stripe-Signature`      | `t=<timestamp>,v1=<signature>` |
 
-Requests with invalid or missing signatures return `401 Unauthorized`.
+Requests with invalid or missing signatures return `401 Unauthorized` once you
+register the inbound route helper in your app.
 
 ### Webhook security tips
 
@@ -487,8 +507,8 @@ Requests with invalid or missing signatures return `401 Unauthorized`.
   secrets during rotation.
 - Filter inbound events with the `events:` list so your handler only processes
   expected event types.
-- Monitor the `shaperail_webhook_delivery_log` table for failed deliveries,
-  which may indicate a misconfigured secret or a replay attempt.
+- If you implement delivery logging, monitor it for failed deliveries, which
+  may indicate a misconfigured secret or a replay attempt.
 
 ---
 
@@ -509,10 +529,10 @@ Use this checklist before deploying to production.
 ### Authentication and authorization
 
 - [ ] `auth:` is declared on every endpoint that is not intentionally public
-- [ ] Access token `expiry` is 1 hour or less
+- [ ] If you customized JWT TTLs, access token `expiry` is 1 hour or less
 - [ ] Refresh token rotation is implemented (new refresh token on each use)
-- [ ] API keys use the narrowest role required
-- [ ] Unused API keys are revoked
+- [ ] If API keys are enabled, they use the narrowest role required
+- [ ] If API keys are enabled, unused keys are revoked
 
 ### Input validation
 
@@ -524,9 +544,10 @@ Use this checklist before deploying to production.
 
 ### Rate limiting
 
-- [ ] Redis is configured (`cache.type: redis`) so rate limiting is active
-- [ ] Rate limits are tuned for your expected traffic (lower for public
-  endpoints, higher for internal)
+- [ ] If you enabled the runtime rate limiter, Redis is configured and the
+  limiter is wired into requests
+- [ ] If you enabled application-level rate limiting, limits are tuned for your
+  traffic profile
 - [ ] A reverse proxy provides connection-level rate limiting in addition to
   application-level limits
 

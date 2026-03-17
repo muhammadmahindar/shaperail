@@ -5,7 +5,7 @@ nav_order: 1
 
 # Shaperail
 
-**An AI-native Rust backend framework.** Define resources in YAML; get a production-ready REST API and optional GraphQL with auth, caching, jobs, WebSockets, and OpenAPI — with one canonical schema as the source of truth.
+**An AI-native Rust backend framework.** Define resources in YAML; get a production-ready REST API plus optional protocol and async primitives from one canonical schema.
 
 *Documentation for v{{ site.release_version }}.*
 
@@ -69,8 +69,8 @@ You edit these files; the framework generates the rest.
 | File | Role |
 | --- | --- |
 | `resources/*.yaml` | Schema, endpoints, auth, relations, filters, pagination, cache, indexes |
-| `resources/*.controller.rs` | Business logic functions for controllers declared in the YAML |
-| `migrations/*.sql` | SQL that evolves the database (generated from resource diff) |
+| `resources/*.controller.rs` | One workable convention for controller modules; current apps still require manual controller registration |
+| `migrations/*.sql` | SQL that evolves the database (initial create files can be generated; later schema changes are manual SQL today) |
 | `shaperail.config.yaml` | Port, database, cache, auth, storage, logging, event subscribers |
 | `.env` | `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, etc. |
 | `docker-compose.yml` | Postgres and Redis for local development |
@@ -82,20 +82,20 @@ Generated Rust, OpenAPI, and routes live in `generated/` and are not hand-edited
 ## Features at a glance
 
 - **REST API** — List, get, create, update, delete, bulk create/delete; cursor or offset pagination; filters, sort, full-text search; field selection and relation loading (`?include=…`).
-- **GraphQL** — Same resource schema drives both REST and GraphQL. Enable with `protocols: [rest, graphql]` in `shaperail.config.yaml`. Queries: list (filters, pagination), get by id, nested relations (belongs_to, has_many, has_one). Mutations: create, update, delete with the same auth as REST. Playground at `/graphql/playground`.
-- **gRPC** — Same resource schema drives gRPC alongside REST and GraphQL. Enable with `protocols: [rest, grpc]`. Auto-generated `.proto` files, unary and server-streaming RPCs, JWT auth via metadata, `grpc.health.v1` health checks, server reflection for `grpcurl`.
+- **GraphQL** — Enable with `protocols: [rest, graphql]`. The current generated schema exposes `list_<resource>`, singular get-by-id fields, and `create_` / `update_` / `delete_` mutations. List fields currently support `limit` and `offset` only.
+- **gRPC** — Enable with `protocols: [rest, grpc]`. The current server supports list, stream, get, create, and delete RPCs plus health/reflection. `Update` is not implemented yet, and the CLI does not currently write `.proto` files to disk.
 - **Multi-database** — Optional `databases:` in config with named connections (e.g. `default`, `analytics`). Per-resource `db:` routes that resource to a connection; migrations run against `default`.
 - **API versioning** — Per-resource `version` field prefixes all routes (`/v1/users`, `/v2/orders`). OpenAPI spec and CLI output reflect versioned paths.
 - **Controllers** — Synchronous before/after business logic on write endpoints. Validate input, normalize data, enrich responses — in Rust or sandboxed WASM (TypeScript, Python, Rust, etc.).
-- **Auth** — JWT (Bearer) and API keys (`X-API-Key`); role-based and owner-based rules; rate limiting via Redis.
+- **Auth** — JWT auth is scaffolded from `JWT_SECRET`. API key auth and Redis-backed rate limiting exist as runtime primitives but require manual wiring in the generated app.
 - **Caching** — Redis-backed cache per GET endpoint with TTL and configurable invalidation.
-- **Background jobs** — Priority queues, retries, dead letter queue, job status; enqueue from endpoint declarations.
-- **WebSockets** — Channel YAML, JWT on upgrade, room subscriptions, Redis pub/sub for multi-instance broadcast.
+- **Background jobs** — Endpoint `jobs:` declarations enqueue work into the Redis queue. Running a worker and registering handlers is still a manual bootstrap step.
+- **WebSockets** — Runtime session/channel primitives exist, but the scaffold does not auto-load `channels/*.channel.yaml` or register `/ws/...` routes.
 - **File storage** — Local, S3, GCS, Azure; upload validation, signed URLs, image processing.
-- **Events & webhooks** — Auto-emitted resource events; subscribers (job, webhook, channel); outbound HMAC-signed webhooks; inbound webhook endpoints.
+- **Events & webhooks** — Write handlers can emit events into the job queue. Subscriber execution, webhook delivery handlers, and inbound webhook route registration still require manual wiring.
 - **Observability** — Structured JSON logs, request_id, PII redaction; Prometheus metrics; OpenTelemetry; `/health` and `/health/ready`.
-- **Multi-service workspaces** — `shaperail.workspace.yaml` declares multiple services. Redis-backed service registry with heartbeat, auto-generated typed inter-service clients, `shaperail serve --workspace`, distributed sagas with compensating actions.
-- **Multi-tenancy** — Add `tenant_key: org_id` to any resource for automatic row-level isolation. Queries are scoped to the JWT `tenant_id` claim; cache and rate limits are per-tenant; `super_admin` bypasses the filter.
+- **Multi-service workspaces** — `shaperail serve --workspace` validates a workspace and starts each service in dependency order. Registry, typed clients, and saga orchestration are not wired into that flow yet.
+- **Multi-tenancy** — Add `tenant_key: org_id` to any resource for automatic row-level isolation. Queries are scoped to the JWT `tenant_id` claim; cache keys are per-tenant; rate-limit keys are too when the limiter is wired; `super_admin` bypasses the filter.
 - **WASM plugins** — Write controller hooks in TypeScript, Python, Rust, or any language that compiles to WASM. Sandboxed execution with no filesystem or network access; fuel-limited; crash-isolated from the server.
 - **OpenAPI & SDK** — Deterministic OpenAPI 3.1; TypeScript SDK generation.
 

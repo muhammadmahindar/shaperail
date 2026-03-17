@@ -317,7 +317,8 @@ admin dashboards and support tools.
 
 ### Cache and rate limit isolation
 
-Cache keys and rate limit keys automatically include the tenant ID so that:
+Cache keys automatically include the tenant ID, and rate-limit keys do too when
+the runtime rate limiter is wired, so that:
 
 - Cached responses are never shared across tenants
 - Rate limits are enforced independently per tenant

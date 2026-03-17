@@ -4,13 +4,16 @@ parent: Guides
 nav_order: 7
 ---
 
-Shaperail includes a Redis-backed background job queue with priority levels,
-automatic retries, and a dead letter queue for failed jobs.
+Shaperail includes a Redis-backed job queue and worker primitives. The runtime
+can enqueue jobs from endpoint declarations, but the scaffolded app does not
+start a worker or register job handlers for you.
 
-## Declaring jobs on endpoints
+## What the scaffold does today
 
-Add a `jobs` array to any endpoint in your resource YAML. Each entry is the
-name of a registered job handler.
+When Redis is configured, the generated app creates a `JobQueue` and write
+endpoints that declare `jobs:` will enqueue named jobs after a successful write.
+
+Example:
 
 ```yaml
 endpoints:
@@ -22,118 +25,81 @@ endpoints:
     jobs: [send_welcome_email]
 ```
 
-When the endpoint completes successfully, each listed job is enqueued
-automatically with the created record as the payload.
+That enqueue step is automatic.
 
-## Priority levels
+What is **not** automatic:
 
-Every job has a priority. Each level maps to a separate Redis list so the
-worker always processes higher-priority jobs first.
+- registering Rust job handlers
+- starting `shaperail_runtime::jobs::Worker`
+- processing retries and dead-letter transitions
 
-| Priority | Redis key | Use case |
-| --- | --- | --- |
-| `critical` | `shaperail:jobs:queue:critical` | Payment processing, security alerts |
-| `high` | `shaperail:jobs:queue:high` | Transactional email, webhooks |
-| `normal` | `shaperail:jobs:queue:normal` | Welcome emails, notifications |
-| `low` | `shaperail:jobs:queue:low` | Analytics, cleanup tasks |
+## Wiring a worker manually
 
-The worker polls queues in strict priority order: critical, high, normal, low.
-A job from a lower queue is only picked up when all higher queues are empty.
-
-Jobs declared via `jobs:` on an endpoint default to `normal` priority.
-
-## Job lifecycle
-
-Every job moves through a fixed set of states:
-
-```
-pending --> running --> completed
-                  \--> failed --> (retry) --> pending
-                           \--> dead letter queue
-```
-
-- **pending** -- enqueued and waiting for the worker.
-- **running** -- picked up by the worker; handler is executing.
-- **completed** -- handler returned success.
-- **failed** -- handler returned an error or the job timed out.
-
-Job metadata is stored in a Redis hash at `shaperail:jobs:meta:{job_id}` and
-expires after 7 days.
-
-## Retry behavior
-
-Failed jobs are retried with exponential backoff. The delay before each retry
-is `2^attempt` seconds:
-
-| Attempt | Backoff |
-| --- | --- |
-| 1 | 2s |
-| 2 | 4s |
-| 3 | 8s |
-
-The default `max_retries` is **3**. You can override it when enqueuing with
-custom options:
+To actually execute queued jobs, create a registry and spawn a worker from your
+app bootstrap:
 
 ```rust
-queue.enqueue_with_options(
-    "send_welcome_email",
-    payload,
-    JobPriority::Normal,
-    5,   // max_retries
-    300, // timeout_secs
-).await?;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+
+use shaperail_runtime::jobs::{JobRegistry, Worker};
+
+let mut handlers = HashMap::new();
+handlers.insert(
+    "send_welcome_email".to_string(),
+    Arc::new(|payload| Box::pin(async move {
+        println!("job payload: {payload}");
+        Ok(())
+    })),
+);
+
+let registry = JobRegistry::from_handlers(handlers);
+let worker = Worker::new(job_queue.clone(), registry, Duration::from_secs(1));
+let (_tx, rx) = tokio::sync::watch::channel(false);
+let _handle = worker.spawn(rx);
 ```
 
-If a retry is scheduled, the job status returns to `pending` and is pushed
-back onto the same priority queue.
+## Queue behavior
 
-## Dead letter queue
+The runtime worker polls queues in strict priority order:
 
-Jobs that exhaust all retries are moved to the dead letter queue at
-`shaperail:jobs:dead`. Each dead letter entry records:
-
-- job ID and name
-- original payload
-- final error message
-- total attempts
-- timestamp of final failure
-
-Once a job enters the dead letter queue its status is permanently set to
-`failed`.
-
-## Job timeout
-
-Each job has a configurable timeout. If the handler does not return within the
-timeout window, the job is treated as failed and follows the normal retry or
-dead letter path.
-
-| Setting | Default |
+| Priority | Redis key |
 | --- | --- |
-| `timeout_secs` | 300 (5 minutes) |
+| `critical` | `shaperail:jobs:queue:critical` |
+| `high` | `shaperail:jobs:queue:high` |
+| `normal` | `shaperail:jobs:queue:normal` |
+| `low` | `shaperail:jobs:queue:low` |
+
+Jobs declared via endpoint `jobs:` are enqueued at `normal` priority.
+
+## Retry and dead-letter behavior
+
+Retries and dead-letter handling are worker features. Once a worker is running:
+
+- failed jobs are retried with exponential backoff
+- timed-out or exhausted jobs move to `shaperail:jobs:dead`
+- metadata is stored under `shaperail:jobs:meta:{job_id}`
+
+Without a worker, jobs remain queued and never transition beyond `pending`.
 
 ## Monitoring
 
-Check the queue summary:
+The CLI can inspect queue state whether or not a worker is running:
 
 ```bash
 shaperail jobs:status
-```
-
-Check the status of a specific job:
-
-```bash
 shaperail jobs:status <job_id>
 ```
 
-Without a job ID, the command prints queue depth by priority, the dead letter
-count, and recent failures. With a job ID, it reads the metadata hash at
-`shaperail:jobs:meta:{job_id}` and prints the current status, attempt count,
-timestamps, and last error if any.
+The summary view prints queue depth by priority, dead-letter count, and recent
+dead-letter entries. Passing a job ID shows the stored metadata hash for that
+job.
 
-## Redis key reference
+## Practical guidance
 
-| Key pattern | Type | Contents |
-| --- | --- | --- |
-| `shaperail:jobs:queue:{priority}` | List | Serialized job envelopes |
-| `shaperail:jobs:meta:{job_id}` | Hash | Job status, attempt count, timestamps |
-| `shaperail:jobs:dead` | List | Dead letter entries |
+- Use `jobs:` when the side effect can happen after the HTTP response.
+- Do not assume declaring `jobs:` also creates or registers the handler.
+- In a scaffolded app, "jobs stuck in pending" usually means no worker was
+  started.
+- Keep handlers idempotent because retries are part of the queue model.

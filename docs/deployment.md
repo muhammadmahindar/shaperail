@@ -91,7 +91,7 @@ Shaperail reads configuration from two sources:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PORT` | `3000` | HTTP server port |
+| `SHAPERAIL_PORT` | `3000` | Process-level override for the HTTP server port |
 | `RUST_LOG` | `info` | Log level filter (e.g., `warn`, `info,shaperail_runtime=debug`) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | OTLP gRPC endpoint; unset disables tracing |
 | `OTEL_SERVICE_NAME` | `shaperail` | Service name in distributed traces |
@@ -117,7 +117,7 @@ environment variables without hardcoding secrets:
 
 ```yaml
 project: my-app
-port: ${PORT:3000}
+port: ${SHAPERAIL_PORT:3000}
 workers: auto
 
 database:
@@ -196,19 +196,17 @@ databases:
 Run migrations **before** deploying new application code:
 
 ```bash
-# Generate migration SQL from resource definitions
-shaperail migrate
-
-# Apply migrations (uses sqlx-cli under the hood)
+# Apply pending SQL migrations (uses sqlx-cli under the hood)
 DATABASE_URL=postgresql://user:pass@db.example.com:5432/myapp shaperail migrate
 ```
 
 **Migration workflow for production:**
 
-1. Run `shaperail migrate` in your CI pipeline to generate SQL files
-2. Review the generated SQL in `migrations/`
-3. Apply migrations against production as a separate deployment step
-4. Deploy the new application code after migrations succeed
+1. Keep reviewed SQL files in `migrations/` under source control
+2. For brand-new resources, `shaperail migrate` can generate the missing initial `create_<resource>` files
+3. For later schema changes, write the follow-up SQL migration files manually
+4. Apply pending migrations against production as a separate deployment step
+5. Deploy the new application code after migrations succeed
 
 **Rollback strategy:**
 
@@ -812,10 +810,11 @@ This means:
 Deploy database migrations **before** new application code:
 
 ```
-1. Run shaperail migrate (schema changes are backward-compatible)
-2. Deploy new application pods (rolling update)
-3. Verify health checks pass on new pods
-4. Old pods drain and terminate
+1. Check in the migration SQL first (generated initial create files or manual follow-up SQL)
+2. Run shaperail migrate to apply pending files
+3. Deploy new application pods (rolling update)
+4. Verify health checks pass on new pods
+5. Old pods drain and terminate
 ```
 
 Write migrations to be backward-compatible with the currently running code:

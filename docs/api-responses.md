@@ -70,18 +70,16 @@ last page.
 
 ### Bulk create (POST /resources/bulk)
 
-Send an array of records in the request body:
+Send a raw JSON array in the request body:
 
 ```json
-{
-  "data": [
-    { "email": "alice@example.com", "name": "Alice", "role": "admin" },
-    { "email": "bob@example.com", "name": "Bob", "role": "member" }
-  ]
-}
+[
+  { "email": "alice@example.com", "name": "Alice", "role": "admin" },
+  { "email": "bob@example.com", "name": "Bob", "role": "member" }
+]
 ```
 
-Response (HTTP 201):
+Response (HTTP 200):
 
 ```json
 {
@@ -111,23 +109,25 @@ validation, the entire batch is rolled back.
 
 ### Bulk delete (DELETE /resources/bulk)
 
-Send an array of IDs in the request body:
+Send a raw JSON array of IDs in the request body:
 
 ```json
-{
-  "ids": [
-    "550e8400-e29b-41d4-a716-446655440000",
-    "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
-  ]
-}
+[
+  "550e8400-e29b-41d4-a716-446655440000",
+  "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+]
 ```
 
 Response (HTTP 200):
 
 ```json
 {
-  "data": {
-    "deleted": 2
+  "data": [
+    { "id": "550e8400-e29b-41d4-a716-446655440000", "email": "alice@example.com" },
+    { "id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8", "email": "bob@example.com" }
+  ],
+  "meta": {
+    "total": 2
   }
 }
 ```
@@ -142,8 +142,9 @@ endpoints:
     auth: [admin]
 ```
 
-Bulk delete respects `soft_delete: true` when declared — it sets `deleted_at`
-instead of removing rows.
+Bulk delete uses the same bulk response envelope as bulk create. For
+`soft_delete: true`, the returned items are the soft-deleted rows; for hard
+delete, they are the deletion results returned by the store layer.
 
 ### Delete (DELETE /v1/resources/:id)
 

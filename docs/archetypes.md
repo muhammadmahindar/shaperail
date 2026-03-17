@@ -175,7 +175,7 @@ tenant_key: org_id
 This causes Shaperail to:
 1. Automatically add a `WHERE org_id = <jwt.tenant_id>` clause to all queries
 2. Scope cache keys by tenant
-3. Scope rate limits by tenant
+3. Scope rate-limit keys by tenant when the rate limiter is enabled
 4. Allow `super_admin` role to bypass tenant filtering
 
 **Endpoints:**

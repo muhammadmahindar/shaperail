@@ -13,7 +13,7 @@ stays next to the route definition.
 auth: public
 ```
 
-No token is required.
+No credentials are required.
 
 ## Role-based endpoints
 
@@ -21,7 +21,7 @@ No token is required.
 auth: [admin, member]
 ```
 
-The request must carry credentials that map to one of those roles.
+The authenticated request must map to one of those roles.
 
 ## Owner-based endpoints
 
@@ -37,9 +37,9 @@ auth: [admin, owner]
 
 Important behavior:
 
-- `owner` checks the authenticated user against the record's `created_by` field
-- if the record does not have `created_by`, the ownership check fails
-- owner checks are best paired with role fallbacks such as `[admin, owner]`
+- `owner` compares the authenticated user to the row's `created_by` field
+- if `created_by` is missing, the owner check fails closed
+- `owner` is usually best paired with a role fallback such as `[admin, owner]`
 
 ## Recommended schema pattern
 
@@ -62,67 +62,52 @@ endpoints:
 
 ## Request headers
 
-Shaperail checks credentials in this order:
+The extractor checks credentials in this order:
 
-1. **JWT** — `Authorization: Bearer <token>`
-2. **API key** — `X-API-Key: <key>`
+1. `Authorization: Bearer <token>`
+2. `X-API-Key: <key>`
 
-If both are absent, the request is unauthenticated. Protected endpoints return
-401.
+## JWTs in the scaffolded app
 
-### JWT configuration
+JWT auth works out of the box in the generated app when `JWT_SECRET` is set.
 
-Set these in `shaperail.config.yaml` or via environment variables:
+Current limitation: the scaffold currently constructs JWT settings from the
+`JWT_SECRET` environment variable only. The `auth:` block in
+`shaperail.config.yaml` is parsed by the config schema, but the generated
+bootstrap does not currently read `secret_env`, `expiry`, or `refresh_expiry`
+from that block.
 
-```yaml
-auth:
-  provider: jwt
-  secret_env: JWT_SECRET
-  expiry: 3600          # access token TTL in seconds (default: 24h)
-  refresh_expiry: 86400 # refresh token TTL (default: 30d)
-```
+So today:
 
-The JWT payload carries `sub` (user ID), `role`, `token_type` (access or
-refresh), and optionally `tenant_id` for multi-tenancy. Only `access` tokens
-are accepted for API requests.
+- set `JWT_SECRET`
+- expect the scaffold to use the built-in 24h access / 30d refresh defaults
+- customize bootstrap code yourself if you need different JWT settings
 
-### API key authentication
+## API keys
 
-API keys are an alternative to JWT for service-to-service calls. Each key maps
-to a user ID and role. Keys are checked via the `X-API-Key` header when no
-Bearer token is present.
+The runtime supports API key auth through `X-API-Key`, but it only works when
+you inject an `ApiKeyStore` into the Actix app.
+
+The scaffolded app does not create or populate an API key store automatically,
+so API keys are currently a manual integration step.
 
 ## Rate limiting
 
-Shaperail enforces sliding-window rate limits per IP or per authenticated user,
-backed by Redis.
+The runtime contains a Redis-backed `RateLimiter`, but the scaffolded app does
+not wire it into request handling automatically.
 
-Default limits: 100 requests per 60-second window.
-
-When the limit is exceeded, the response is `429 Rate Limited`. Rate limit
-state is stored in Redis and survives server restarts.
-
-Rate limiting keys:
-- Unauthenticated: `ip:<address>`
-- Authenticated: `user:<user_id>`
-- Tenant-scoped (when `tenant_key` is set): `t:<tenant_id>:user:<user_id>`
-
-## Multi-tenancy
-
-When a resource declares `tenant_key`, Shaperail scopes all queries to the
-user's `tenant_id` JWT claim. The `super_admin` role bypasses tenant filtering.
-
-See the [Multi-tenancy guide]({{ '/multi-tenancy/' | relative_url }}) for full
-details.
+If you need application-level rate limiting today, you must add that middleware
+or wrapper yourself. Until then, rely on your reverse proxy or edge layer for
+enforcement.
 
 ## What Shaperail does not do automatically
 
-Shaperail does not currently auto-fill `created_by` from the token.
+Shaperail does not auto-fill `created_by` from the authenticated user.
 
-You need to choose one of these patterns:
+You still need to choose one of these patterns:
 
 - send `created_by` explicitly in the create payload
-- use a [controller]({{ '/controllers/' | relative_url }}) that sets or validates it before insert
+- use a controller that sets or validates it before insert
 
 ## Practical policy for first projects
 
@@ -133,7 +118,8 @@ You need to choose one of these patterns:
 | User-owned updates | `[admin, owner]` |
 | Destructive admin-only operations | `[admin]` |
 
-## Example
+## Multi-tenancy
 
-The [Blog API example]({{ '/blog-api-example/' | relative_url }}) shows `owner`-based updates for
-both posts and comments using a shared `created_by` pattern.
+When you use `tenant_key`, tenant scoping builds on the authenticated user's
+`tenant_id`. See the [Multi-tenancy guide]({{ '/multi-tenancy/' | relative_url }})
+for the full behavior.

@@ -18,7 +18,7 @@ serve, then package.
 | `shaperail build [--docker]` | Build release binary. With `--docker`, build a scratch-based Docker image. |
 | `shaperail validate [path]` | Validate resource file(s). Default path: `resources`. |
 | `shaperail test [-- args...]` | Run generated and custom tests (`cargo test` with optional args). |
-| `shaperail migrate [--rollback]` | Generate and apply SQL migrations from resource diff. `--rollback` reverts the last batch. |
+| `shaperail migrate [--rollback]` | Generate missing initial create-table migrations and apply SQL migrations through `sqlx-cli`. `--rollback` reverts the last applied batch. |
 | `shaperail seed [path]` | Load fixture YAML from `seeds/` (or given path) into the database. Default path: `seeds`. |
 | `shaperail export openapi [--output FILE]` | Emit OpenAPI 3.1 spec to stdout or to a file. |
 | `shaperail export sdk --lang <lang> [--output DIR]` | Generate client SDK (e.g. `--lang ts` for TypeScript). |
@@ -42,7 +42,7 @@ Every command supports `--help`.
 | `shaperail validate` | Check the whole project | Validates every resource in the project |
 | `shaperail routes` | Review generated route surface | Prints routes with auth requirements |
 | `shaperail export openapi --output openapi.json` | Review or publish the contract | Writes the deterministic OpenAPI 3.1 spec |
-| `shaperail migrate` | Schema changed | Creates a new SQL migration based on current resource definitions |
+| `shaperail migrate` | New resources or unapplied SQL files exist | Generates missing initial `create_<resource>` migrations, then applies all migrations |
 | `shaperail seed` | Populate dev data | Loads YAML fixtures from `seeds/` into the database in a transaction |
 | `shaperail jobs:status [job_id]` | Check background work | Shows queue summary by default or inspects a specific job |
 | `shaperail serve` | Run locally | Applies existing migrations and starts the development server |
@@ -93,8 +93,10 @@ shaperail seed
 shaperail seed seeds/
 ```
 
-`migrate` creates new SQL files. `--rollback` reverts the last applied migration
-batch when you need to back out a recent change locally.
+`migrate` is currently best thought of as an initial-migration generator plus a
+`sqlx migrate run` wrapper. It does not diff later schema edits into `ALTER
+TABLE` SQL for you. `--rollback` reverts the last applied migration batch when
+you need to back out a recent local change.
 
 `seed` loads YAML fixture files from the `seeds/` directory into the database.
 Each file maps to a table by filename (e.g., `seeds/users.yaml` inserts into
@@ -164,6 +166,7 @@ instead of the summary view.
 ## Practical notes
 
 - `shaperail migrate` currently relies on `sqlx-cli`.
+- Later schema edits still require handwritten SQL migration files today.
 - `shaperail seed` requires `DATABASE_URL` set in the environment or `.env`.
 - `shaperail serve` uses the `.env` and config values in the current project.
 - The scaffolded app already serves browser docs and the raw OpenAPI document.

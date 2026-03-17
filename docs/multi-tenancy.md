@@ -5,8 +5,9 @@ nav_order: 14
 ---
 
 Shaperail supports automatic row-level multi-tenancy. Add a single top-level
-key to a resource file and the framework scopes every query, cache entry, and
-rate limit to the authenticated user's tenant.
+key to a resource file and the framework scopes every query and cache entry to
+the authenticated user's tenant. Tenant-scoped rate-limit keys also apply when
+the runtime rate limiter is enabled.
 
 ## Enabling multi-tenancy on a resource
 
@@ -52,7 +53,8 @@ endpoints:
     auth: [admin]
 ```
 
-That is the only change needed. The framework handles the rest.
+That is the only change needed for query isolation and tenant-scoped cache
+keys. If you also wire the runtime rate limiter, its keys are tenant-scoped too.
 
 ## How it works
 
@@ -121,8 +123,8 @@ When a user with no `tenant_id` claim makes a request, the tenant segment is
 
 ### Rate limit isolation
 
-Rate limit keys are scoped per tenant so each tenant gets its own independent
-rate limit budget:
+When the runtime rate limiter is enabled, rate limit keys are scoped per tenant
+so each tenant gets its own independent budget:
 
 ```
 shaperail:ratelimit:t:org-abc:user:user-123
@@ -134,7 +136,9 @@ shaperail:ratelimit:t:org-xyz:user:user-456   # independent counter
 The `tenant_id` is available in controller functions via `ctx.tenant_id`:
 
 ```rust
-pub async fn check_project_limit(ctx: &mut ControllerContext) -> Result<(), ShaperailError> {
+use shaperail_runtime::handlers::controller::{Context, ControllerResult};
+
+pub async fn check_project_limit(ctx: &mut Context) -> ControllerResult {
     if let Some(tenant_id) = &ctx.tenant_id {
         // Custom logic using the tenant ID
         tracing::info!(tenant = %tenant_id, "Checking project limit");

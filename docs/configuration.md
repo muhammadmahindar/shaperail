@@ -5,9 +5,8 @@ nav_order: 3
 ---
 
 Every Shaperail project has a single configuration file named
-`shaperail.config.yaml` in the project root. This file controls the HTTP
-server, database, cache, authentication, storage, logging, and event routing
-for the entire service.
+`shaperail.config.yaml` in the project root. This file defines the project
+configuration surface for the generated app and optional runtime features.
 
 ## Minimal config
 
@@ -111,8 +110,8 @@ protocols:
 | Value | Description |
 | --- | --- |
 | `rest` | REST API (list, get, create, update, delete) — always available when a database is configured. |
-| `graphql` | GraphQL endpoint at `/graphql` and Playground at `/graphql/playground`. Queries (list, get, relations) and mutations (create, update, delete) with the same auth as REST. |
-| `grpc` | gRPC server on a separate port (default 50051). Unary and streaming RPCs, JWT auth via metadata, server reflection, health checks. See the [gRPC guide]({{ '/grpc/' | relative_url }}). |
+| `graphql` | GraphQL endpoint at `/graphql` and Playground at `/graphql/playground`. Current list fields expose `limit` and `offset`; see the [GraphQL guide]({{ '/graphql/' | relative_url }}). |
+| `grpc` | gRPC server on a separate port (default 50051). Current runtime support covers list/stream/get/create/delete plus health/reflection; see the [gRPC guide]({{ '/grpc/' | relative_url }}). |
 
 Only `rest`, `graphql`, and `grpc` are allowed. Unknown values cause a parse error.
 
@@ -192,8 +191,12 @@ databases:
 Supported engines:
 
 - **postgres** — PostgreSQL. Full CRUD, filters, sort, pagination, migrations.
-- **mysql** — Planned; config accepted, runtime support in progress.
-- **sqlite** — Planned; config accepted, runtime support in progress.
+- **mysql** — SQL multi-db support is wired in the runtime and scaffold bootstrap.
+- **sqlite** — SQL multi-db support is wired in the runtime and scaffold bootstrap.
+
+MongoDB note: the core multi-db model also includes a `mongodb` engine and the
+runtime exposes Mongo-backed store primitives behind the `multi-db` feature, but
+the scaffolded bootstrap only wires SQL engines automatically today.
 
 When `databases` is present, `database` is ignored and `DATABASE_URL` is only
 used if you reference it inside a `databases.*.url` value (e.g. `default`).
@@ -218,6 +221,11 @@ Optional. When omitted, endpoints that declare `auth` will fail validation.
 | `expiry` | string | yes | -- | Token lifetime (e.g., `24h`, `60m`). |
 | `refresh_expiry` | string | no | -- | Refresh token lifetime (e.g., `30d`). Omit to disable refresh tokens. |
 
+Current limitation: the scaffolded app currently reads JWT settings from the
+`JWT_SECRET` environment variable only and uses built-in 24h / 30d defaults.
+The `auth:` block is parsed and validated, but the generated bootstrap does not
+yet consume `secret_env`, `expiry`, or `refresh_expiry` automatically.
+
 ### `storage`
 
 Optional. When omitted, file upload endpoints are unavailable.
@@ -241,7 +249,11 @@ Optional. Defaults to `info`-level JSON logs with no OTLP export.
 ### `events`
 
 Optional. Controls event subscribers, outbound webhook settings, and inbound
-webhook endpoints.
+webhook declarations.
+
+Current limitation: the generated scaffold creates an `EventEmitter`, but it
+does not automatically start worker handlers for subscriber targets or register
+inbound webhook routes.
 
 #### `events.subscribers`
 
@@ -285,7 +297,7 @@ validation, response enrichment), use `controller:` on endpoints — see
 
 #### `events.webhooks`
 
-Global settings for outbound webhook delivery.
+Global settings for outbound webhook delivery helpers.
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -295,13 +307,17 @@ Global settings for outbound webhook delivery.
 
 #### `events.inbound`
 
-A list of inbound webhook endpoints that Shaperail registers as routes.
+A list of inbound webhook endpoints for
+`shaperail_runtime::events::configure_inbound_routes(...)`.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `path` | string | yes | URL path (e.g., `/webhooks/stripe`). |
 | `secret_env` | string | yes | Environment variable holding the verification secret. |
 | `events` | list of strings | no | Event names this endpoint accepts. Empty means all events. |
+
+These entries are parsed by the config layer, but the scaffolded app does not
+call the inbound-route helper automatically.
 
 ## Environment variable interpolation
 

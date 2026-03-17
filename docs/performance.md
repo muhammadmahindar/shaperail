@@ -61,7 +61,8 @@ that is too small causes requests to queue waiting for a free connection.
 
 ### Indexes
 
-Declare indexes in the resource YAML so they are created by `shaperail migrate`:
+Declare indexes in the resource YAML for new resources, and mirror them in
+manual follow-up SQL when you add indexes to an existing table:
 
 ```yaml
 indexes:
@@ -73,12 +74,14 @@ When to add indexes:
 
 - **Filter fields** -- every field listed in `filters:` on an endpoint should be
   indexed, either individually or as part of a composite index.
-- **Search fields** -- fields in `search:` benefit from a GIN trigram index.
-  Shaperail generates these automatically when `search:` is declared.
+- **Search fields** -- fields in `search:` often need database-specific tuning.
+  Shaperail uses PostgreSQL full-text search clauses, but it does not
+  auto-generate GIN/trigram indexes for you.
 - **Sort fields** -- if you sort by `created_at` descending, an index with
   `order: desc` avoids a sequential scan plus sort.
 - **Foreign keys** -- any `ref:` field (e.g., `org_id: { type: uuid, ref: organizations.id }`)
-  should be indexed. Shaperail creates these by default.
+  should be indexed if you filter or join on it frequently. Declare those
+  indexes explicitly under `indexes:`.
 
 When NOT to add indexes:
 

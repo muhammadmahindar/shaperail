@@ -20,7 +20,7 @@ shaperail build                Build release binary
 shaperail build --docker       Build scratch-based Docker image
 shaperail validate             Validate all resource files
 shaperail test                 Run generated + custom tests
-shaperail migrate              Generate + apply SQL migrations
+shaperail migrate              Generate missing initial migrations and apply SQL files
 shaperail migrate --rollback   Rollback last migration batch
 shaperail seed                 Load fixture YAML files into database
 shaperail export openapi       Export OpenAPI 3.1 spec
@@ -40,6 +40,10 @@ shaperail generate
 shaperail migrate
 shaperail serve
 ```
+
+`shaperail migrate` currently generates missing initial `create_<resource>`
+migrations and then applies SQL files through `sqlx-cli`. Later schema changes
+still require handwritten migration SQL.
 
 ## License
 

@@ -56,18 +56,31 @@ optional — you can declare just `before`, just `after`, or both.
 
 ## Writing controller functions
 
-Controller functions live in a file co-located with the resource YAML:
+One workable convention is a file co-located with the resource YAML:
 
 ```text
 resources/
   users.yaml                # schema + endpoints
-  users.controller.rs       # all controller functions for users
+  users.controller.rs       # controller module for users
   orders.yaml
   orders.controller.rs
 ```
 
-Two files give you the complete picture of a resource — the YAML declares what
-exists, the controller file declares how it behaves.
+Current limitation: scaffolded apps do not auto-discover controller files or
+populate the controller map yet. The runtime controller API exists today, but
+you must register functions yourself during bootstrap.
+
+```rust
+// src/main.rs or another bootstrap module
+#[path = "../resources/users.controller.rs"]
+mod users_controller;
+
+let mut controllers = generated::build_controller_map();
+controllers.register("users", "validate_org", users_controller::validate_org);
+```
+
+The YAML declares what exists; the registered controller functions define the
+extra runtime behavior.
 
 Each function is a named async function that takes `&mut Context`:
 
@@ -108,45 +121,26 @@ pub async fn validate_org(ctx: &mut Context) -> ControllerResult {
 }
 ```
 
-Function names in the controller file must match what is declared in the YAML.
+Function names you register in the controller map must match what is declared
+in the YAML.
 
 ---
 
-## Generated controller traits (v0.7.0+)
+## Generated helper stubs
 
-When you run `shaperail generate`, the codegen produces typed controller traits
-for every resource that declares controllers:
+`shaperail generate` currently writes controller-related helper artifacts into
+`generated/mod.rs`, including typed input structs and trait stubs for resources
+that declare controllers.
 
-```rust
-// generated/mod.rs (auto-generated — do not edit)
-
-/// Input fields for the users create endpoint.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct UsersCreateInput {
-    pub email: String,
-    pub name: String,
-    pub role: Option<String>,
-    pub org_id: uuid::Uuid,
-}
-
-/// Controller trait for the users resource.
-/// Implement this trait in `controllers/users.controller.rs`.
-#[async_trait::async_trait]
-pub trait UsersController {
-    async fn validate_org(
-        ctx: &shaperail_runtime::handlers::controller::ControllerContext,
-        input: &UsersCreateInput,
-    ) -> Result<(), shaperail_core::ShaperailError>;
-}
-```
-
-The compiler enforces that your controller functions have the correct signatures.
-If you rename a field in the schema or change the input list, the trait changes
-and the compiler tells you what to fix.
+Current limitation: those generated trait stubs still use legacy
+`ControllerContext` naming in their comments/signatures. Treat them as
+reference material only. The callable runtime controller API is the
+`&mut shaperail_runtime::handlers::controller::Context` signature shown in this
+guide.
 
 ---
 
-## ControllerContext API
+## Context API
 
 The `Context` struct is the single type passed to all controller functions:
 
@@ -197,9 +191,9 @@ Key behaviors:
 ```rust
 pub async fn set_created_by(ctx: &mut Context) -> ControllerResult {
     if let Some(user) = &ctx.user {
-        ctx.input["created_by"] = serde_json::json!(user.user_id);
+        ctx.input["created_by"] = serde_json::json!(user.id);
     } else {
-        return Err(ShaperailError::Unauthorized("No authenticated user".into()));
+        return Err(ShaperailError::Unauthorized);
     }
     Ok(())
 }
@@ -350,18 +344,18 @@ pub async fn enforce_workflow(ctx: &mut Context) -> ControllerResult {
     match new_status.as_str() {
         "pending_review" => {
             if let Some(user) = &ctx.user {
-                ctx.input["submitted_by"] = serde_json::json!(user.user_id);
+                ctx.input["submitted_by"] = serde_json::json!(user.id);
             }
         }
         "approved" => {
             if let Some(user) = &ctx.user {
-                ctx.input["approved_by"] = serde_json::json!(user.user_id);
+                ctx.input["approved_by"] = serde_json::json!(user.id);
             }
             ctx.input.remove("rejection_reason");
         }
         "rejected" => {
             if let Some(user) = &ctx.user {
-                ctx.input["reviewed_by"] = serde_json::json!(user.user_id);
+                ctx.input["reviewed_by"] = serde_json::json!(user.id);
             }
             // Require rejection reason
             if ctx.input.get("rejection_reason")
@@ -554,7 +548,7 @@ pub async fn capture_snapshot(ctx: &mut Context) -> ControllerResult {
 /// Write an audit log entry after the update completes.
 pub async fn write_audit_log(ctx: &mut Context) -> ControllerResult {
     let user_id = ctx.user.as_ref()
-        .map(|u| u.user_id.to_string())
+        .map(|u| u.id.clone())
         .unwrap_or_else(|| "system".to_string());
 
     let before_json = ctx.response_headers.iter()
@@ -785,7 +779,7 @@ use shaperail_core::{ShaperailError, FieldError};
 /// managers can see reports from any department in their org.
 pub async fn enforce_department_access(ctx: &mut Context) -> ControllerResult {
     let user = ctx.user.as_ref()
-        .ok_or(ShaperailError::Unauthorized("Authentication required".into()))?;
+        .ok_or(ShaperailError::Unauthorized)?;
 
     let report_id = ctx.input.get("id")
         .and_then(|v| v.as_str())
@@ -804,7 +798,7 @@ pub async fn enforce_department_access(ctx: &mut Context) -> ControllerResult {
     let (user_dept, is_manager): (String, bool) = sqlx::query_as(
         "SELECT department_id, is_manager FROM users WHERE id = $1"
     )
-    .bind(user.user_id)
+    .bind(&user.id)
     .fetch_one(&ctx.pool)
     .await
     .map_err(|e| ShaperailError::Internal(e.to_string()))?;
@@ -812,9 +806,7 @@ pub async fn enforce_department_access(ctx: &mut Context) -> ControllerResult {
     // Managers can access any department in their org (tenant_key handles org isolation)
     // Non-managers can only access their own department
     if !is_manager && user_dept != report_dept {
-        return Err(ShaperailError::Forbidden(
-            "You can only access reports from your own department".into()
-        ));
+        return Err(ShaperailError::Forbidden);
     }
 
     Ok(())
@@ -1063,20 +1055,23 @@ async fn enforce_credit_limit(ctx: &mut Context) -> ControllerResult {
 
 ## ControllerMap registry
 
-Generated code populates a `ControllerMap` at startup. The map stores
-`(resource_name, function_name) → function` entries and is shared across all
-request handlers via `AppState`.
+The runtime uses a `ControllerMap` shared across request handlers via
+`AppState`. The map stores `(resource_name, function_name) → function` entries.
+
+Current limitation: generated code currently returns an empty controller map.
+If you want controllers to run, register them during bootstrap yourself.
 
 ```rust
-// In your generated main.rs (produced by `shaperail generate`)
-let mut controllers = ControllerMap::new();
+// In your app bootstrap
+let mut controllers = generated::build_controller_map();
 controllers.register("users", "validate_org", users_controller::validate_org);
 controllers.register("users", "enrich_response", users_controller::enrich_response);
 controllers.register("users", "normalize_name", users_controller::normalize_name);
 ```
 
-You do not write this wiring by hand — `shaperail generate` reads the YAML
-declarations and emits the registry code.
+Keep the registered names aligned with the YAML declarations. If a function is
+declared in YAML but not registered here, the runtime returns a controller-not-
+found error when that endpoint executes.
 
 ---
 

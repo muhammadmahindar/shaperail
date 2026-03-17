@@ -32,7 +32,7 @@ Every cached response is stored under a key with this structure:
 shaperail:<resource>:<endpoint>:<query_hash>:<tenant_id>:<user_role>
 ```
 
-For example, a `GET /users?filter[role]=admin` request made by a user with
+For example, a `GET /v1/users?filter[role]=admin` request made by a user with
 the `member` role and tenant `org-abc` on the `users` resource's `list`
 endpoint produces a key like:
 

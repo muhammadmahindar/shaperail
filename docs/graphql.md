@@ -4,50 +4,51 @@ parent: Guides
 nav_order: 12
 ---
 
-When you enable GraphQL, Shaperail exposes the same resources as your REST API over a single GraphQL endpoint. The resource YAML is the source of truth for both: types, fields, relations, and auth are derived from the same schema.
+When you enable GraphQL, Shaperail exposes generated GraphQL fields over a
+single endpoint. The resource YAML is still the source of truth, but the
+current GraphQL surface is narrower than the REST API.
 
 ## Enabling GraphQL
 
-**Step 1.** Add the `graphql` feature flag to your project's `Cargo.toml`:
+Add the `graphql` feature to your app's `Cargo.toml`:
 
 ```toml
-shaperail-runtime = { version = "0.6.0", default-features = false, features = ["graphql"] }
+shaperail-runtime = { version = "0.7.0", default-features = false, features = ["graphql"] }
 ```
 
-**Step 2.** In `shaperail.config.yaml`, add `graphql` to the `protocols` list:
+Then enable the protocol in `shaperail.config.yaml`:
 
 ```yaml
 project: my-app
 protocols: [rest, graphql]
-# ... database, cache, auth, etc.
 ```
 
-If you omit `protocols`, only REST is enabled. With `protocols: [rest, graphql]`, the server registers:
+When both are present, the scaffolded server registers:
 
 | URL | Purpose |
 | --- | --- |
-| `POST /graphql` | GraphQL endpoint. Send queries and mutations as JSON: `{ "query": "...", "variables": { ... } }`. |
-| `GET /graphql/playground` | GraphQL Playground — interactive editor and docs (intended for development). |
+| `POST /graphql` | GraphQL endpoint. Send `{ "query": "...", "variables": { ... } }`. |
+| `GET /graphql/playground` | GraphQL Playground for development. |
 
 ## Authentication
 
-GraphQL uses the same auth as REST:
+GraphQL reuses the same auth checks as REST for each generated field.
 
-- Send a JWT in the `Authorization: Bearer <token>` header on the `POST /graphql` request.
-- API keys are supported via `X-API-Key` if configured.
-- Each field backed by an endpoint respects that endpoint’s `auth` (roles and owner checks). Unauthorized requests receive GraphQL errors, not data.
+- JWT works out of the box through `Authorization: Bearer <token>`.
+- API key auth is available only if you manually inject an `ApiKeyStore` into
+  the Actix app. The scaffolded app does not do this for you.
+- Owner checks run on generated `get`, `update`, and `delete` resolvers when
+  the endpoint auth rule includes `owner`.
 
-## Queries
+## Current schema shape
 
-### List
+### List fields
 
-For each resource with a `list` endpoint, the schema exposes a list query. The type name is the resource name with the first letter of each word capitalized and words joined (e.g. `users` → `Users`; multi-word resources follow the same pattern).
-
-Example:
+For each resource with a `list` endpoint, GraphQL exposes:
 
 ```graphql
 query {
-  users(limit: 10, cursor: null) {
+  list_users(limit: 10, offset: 0) {
     id
     email
     name
@@ -56,11 +57,13 @@ query {
 }
 ```
 
-List queries support `limit`, `cursor` (for cursor-based pagination), and filter arguments that match the endpoint’s `filters` (e.g. `role`, `org_id`). The exact arguments are generated from your resource definition.
+Current limitation: list fields only accept `limit` and `offset`. REST filters,
+search fields, sort fields, and cursor pagination are not exposed as GraphQL
+arguments yet.
 
-### Get by ID
+### Get-by-id fields
 
-For each resource with a `get` (or equivalent) endpoint, a singular query is exposed, e.g.:
+For each resource with a `get` endpoint, GraphQL exposes a singular field:
 
 ```graphql
 query {
@@ -68,67 +71,74 @@ query {
     id
     email
     name
-    organization { id name }
   }
 }
 ```
 
-Owner-based auth is enforced: if the endpoint requires ownership, the resolver checks that the authenticated user is allowed to see the requested row.
+### Mutations
 
-### Nested relations
-
-Relation fields are exposed on the types. The same `relations` block in your resource YAML drives GraphQL:
-
-- **belongs_to** — One related object (e.g. `organization` on `user`).
-- **has_many** — List of related objects (e.g. `orders` on `user`).
-- **has_one** — Single related object.
-
-You can nest these in the query:
+For each resource with write endpoints, GraphQL exposes snake_case mutations:
 
 ```graphql
-query {
-  user(id: "...") {
+mutation {
+  create_users(
+    input: {
+      email: "alice@example.com"
+      name: "Alice"
+      role: "member"
+      org_id: "550e8400-e29b-41d4-a716-446655440000"
+    }
+  ) {
     id
+    email
     name
-    organization { id name }
-    orders { id total status }
   }
 }
 ```
 
-## Mutations
+Generated mutation names are:
 
-For each resource with `create`, `update`, or `delete` endpoints, the schema exposes:
+- `create_<resource>`
+- `update_<resource>`
+- `delete_<resource>`
 
-- `create<Resource>(input: <Resource>Input)` — Returns the created row.
-- `update<Resource>(id: String!, input: <Resource>Input)` — Returns the updated row.
-- `delete<Resource>(id: String!)` — Returns the deleted row (or the row with soft-delete fields set). For hard deletes, the returned object is the last state before deletion.
+Input object fields come from the endpoint's `input:` list. If no `input:` list
+is present, the runtime falls back to all non-generated, non-primary fields.
 
-Input types are generated from the endpoint’s `input` list (create/update). Only non-generated, non-primary fields you declare as input are included.
+## Relations
 
-Auth is enforced the same way as REST: role and owner checks run before the mutation. Unauthorized mutations return errors and do not perform the operation.
+Relation fields are generated from the same `relations:` block used by REST:
 
-## Same schema as REST
+- `belongs_to` becomes a single nested object
+- `has_one` becomes a single nested object
+- `has_many` becomes a nested list
 
-Resource YAML drives both REST and GraphQL. You do not define types twice. Changes to schema, endpoints, relations, or auth are reflected in both APIs after you regenerate and restart.
+That means a `user` query can request `organization` or `orders` if those
+relations are declared on the resource.
 
-## Summary
+## Configuration
 
-| Feature | Supported |
-| --- | --- |
-| Queries: list (filters, pagination) | Yes |
-| Queries: get by id | Yes |
-| Queries: nested relations (belongs_to, has_many, has_one) | Yes |
-| Mutations: create, update, delete | Yes |
-| Auth: JWT, API key, RBAC, owner checks | Yes (same as REST) |
-| Playground | Yes (`/graphql/playground`) |
-
-Depth and complexity limits are configurable via the `graphql:` section in `shaperail.config.yaml`:
+Optional limits live under `graphql:` in `shaperail.config.yaml`:
 
 ```yaml
 graphql:
-  depth_limit: 10        # default: 16
-  complexity_limit: 200   # default: 256
+  depth_limit: 10
+  complexity_limit: 200
 ```
 
-See [Configuration > graphql]({{ '/configuration/' | relative_url }}) for details.
+These values are parsed and passed into schema construction when GraphQL is
+enabled.
+
+## Summary
+
+| Feature | Current status |
+| --- | --- |
+| Endpoint registration | Yes |
+| Playground | Yes |
+| List queries | Yes, but `limit` and `offset` only |
+| Get-by-id queries | Yes |
+| Nested relations | Yes |
+| Create / update / delete mutations | Yes |
+| JWT auth | Yes |
+| API key auth | Manual `ApiKeyStore` wiring required |
+| REST filters / search / sort in GraphQL args | Not yet |
