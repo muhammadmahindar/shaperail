@@ -17,7 +17,7 @@ For background work that should not block the response, use
 
 ## Declaring controllers
 
-Add a `controller` field to any write endpoint in your resource YAML:
+Add a `controller` field to any endpoint in your resource YAML:
 
 ```yaml
 resource: users
@@ -34,8 +34,6 @@ schema:
 
 endpoints:
   create:
-    method: POST
-    path: /users
     auth: [admin]
     input: [email, name, role, org_id]
     controller:
@@ -45,8 +43,6 @@ endpoints:
     jobs: [send_welcome_email]
 
   update:
-    method: PATCH
-    path: /users/:id
     auth: [admin, owner]
     input: [name, role]
     controller:
@@ -110,31 +106,43 @@ pub async fn validate_org(ctx: &mut Context) -> ControllerResult {
 
     Ok(())
 }
-
-/// Called after create — add computed fields to the response.
-pub async fn enrich_response(ctx: &mut Context) -> ControllerResult {
-    if let Some(data) = &mut ctx.data {
-        data["display_name"] = serde_json::json!(
-            format!("{} ({})",
-                data["name"].as_str().unwrap_or(""),
-                data["role"].as_str().unwrap_or("member")
-            )
-        );
-    }
-    Ok(())
-}
-
-/// Called before update — normalize the name field.
-pub async fn normalize_name(ctx: &mut Context) -> ControllerResult {
-    if let Some(name) = ctx.input.get("name").and_then(|v| v.as_str()) {
-        let trimmed = name.trim().to_string();
-        ctx.input["name"] = serde_json::json!(trimmed);
-    }
-    Ok(())
-}
 ```
 
 Function names in the controller file must match what is declared in the YAML.
+
+---
+
+## Generated controller traits (v0.7.0+)
+
+When you run `shaperail generate`, the codegen produces typed controller traits
+for every resource that declares controllers:
+
+```rust
+// generated/mod.rs (auto-generated — do not edit)
+
+/// Input fields for the users create endpoint.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UsersCreateInput {
+    pub email: String,
+    pub name: String,
+    pub role: Option<String>,
+    pub org_id: uuid::Uuid,
+}
+
+/// Controller trait for the users resource.
+/// Implement this trait in `controllers/users.controller.rs`.
+#[async_trait::async_trait]
+pub trait UsersController {
+    async fn validate_org(
+        ctx: &shaperail_runtime::handlers::controller::ControllerContext,
+        input: &UsersCreateInput,
+    ) -> Result<(), shaperail_core::ShaperailError>;
+}
+```
+
+The compiler enforces that your controller functions have the correct signatures.
+If you rename a field in the schema or change the input list, the trait changes
+and the compiler tells you what to fix.
 
 ---
 
@@ -182,25 +190,6 @@ Key behaviors:
 
 ---
 
-## ControllerMap registry
-
-Generated code populates a `ControllerMap` at startup. The map stores
-`(resource_name, function_name) → function` entries and is shared across all
-request handlers via `AppState`.
-
-```rust
-// In your generated main.rs (produced by `shaperail generate`)
-let mut controllers = ControllerMap::new();
-controllers.register("users", "validate_org", users_controller::validate_org);
-controllers.register("users", "enrich_response", users_controller::enrich_response);
-controllers.register("users", "normalize_name", users_controller::normalize_name);
-```
-
-You do not write this wiring by hand — `shaperail generate` reads the YAML
-declarations and emits the registry code.
-
----
-
 ## Common patterns
 
 ### Auto-fill `created_by` from token
@@ -210,7 +199,7 @@ pub async fn set_created_by(ctx: &mut Context) -> ControllerResult {
     if let Some(user) = &ctx.user {
         ctx.input["created_by"] = serde_json::json!(user.user_id);
     } else {
-        return Err(ShaperailError::Auth("No authenticated user".into()));
+        return Err(ShaperailError::Unauthorized("No authenticated user".into()));
     }
     Ok(())
 }
@@ -261,6 +250,836 @@ pub async fn add_deprecation_header(ctx: &mut Context) -> ControllerResult {
 
 ---
 
+## Enterprise patterns
+
+These patterns address real-world requirements that large organizations face:
+multi-step approval workflows, cross-resource transactions, audit trails,
+compliance enforcement, and external service integration.
+
+### Multi-step approval workflow
+
+Implement a state-machine for resources that require approval before going live.
+The controller enforces valid state transitions and checks role-based approval
+authority.
+
+```yaml
+# resources/documents.yaml
+resource: documents
+version: 1
+
+schema:
+  id:            { type: uuid, primary: true, generated: true }
+  title:         { type: string, required: true }
+  body:          { type: string, required: true }
+  status:        { type: enum, values: [draft, pending_review, approved, published, rejected], default: draft }
+  submitted_by:  { type: uuid, nullable: true }
+  reviewed_by:   { type: uuid, nullable: true }
+  approved_by:   { type: uuid, nullable: true }
+  rejection_reason: { type: string, nullable: true }
+  org_id:        { type: uuid, ref: organizations.id, required: true }
+  created_at:    { type: timestamp, generated: true }
+  updated_at:    { type: timestamp, generated: true }
+
+endpoints:
+  update:
+    auth: [member, reviewer, admin]
+    input: [title, body, status, rejection_reason]
+    controller:
+      before: enforce_workflow
+      after: notify_stakeholders
+    events: [document.status_changed]
+```
+
+```rust
+// resources/documents.controller.rs
+use shaperail_runtime::handlers::controller::{Context, ControllerResult};
+use shaperail_core::{ShaperailError, FieldError};
+
+/// Allowed state transitions and the roles that can perform them.
+const TRANSITIONS: &[(&str, &str, &[&str])] = &[
+    // (from,           to,              allowed_roles)
+    ("draft",           "pending_review", &["member", "admin"]),
+    ("pending_review",  "approved",       &["reviewer", "admin"]),
+    ("pending_review",  "rejected",       &["reviewer", "admin"]),
+    ("approved",        "published",      &["admin"]),
+    ("rejected",        "draft",          &["member", "admin"]),   // re-submit
+    ("published",       "draft",          &["admin"]),             // unpublish
+];
+
+pub async fn enforce_workflow(ctx: &mut Context) -> ControllerResult {
+    let new_status = match ctx.input.get("status").and_then(|v| v.as_str()) {
+        Some(s) => s.to_string(),
+        None => return Ok(()), // not changing status, skip
+    };
+
+    // Fetch current status from DB
+    let doc_id: uuid::Uuid = ctx.input.get("id")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse().ok())
+        .ok_or(ShaperailError::Internal("Missing document id".into()))?;
+
+    let current_status: String = sqlx::query_scalar(
+        "SELECT status FROM documents WHERE id = $1"
+    )
+    .bind(doc_id)
+    .fetch_one(&ctx.pool)
+    .await
+    .map_err(|_| ShaperailError::NotFound)?;
+
+    // Check if this transition is valid
+    let user_role = ctx.user.as_ref()
+        .map(|u| u.role.as_str())
+        .unwrap_or("anonymous");
+
+    let allowed = TRANSITIONS.iter().any(|(from, to, roles)| {
+        *from == current_status && *to == new_status && roles.contains(&user_role)
+    });
+
+    if !allowed {
+        return Err(ShaperailError::Validation(vec![FieldError {
+            field: "status".into(),
+            message: format!(
+                "cannot transition from '{}' to '{}' with role '{}'",
+                current_status, new_status, user_role
+            ),
+            code: "invalid_transition".into(),
+        }]));
+    }
+
+    // Auto-fill audit fields based on transition
+    match new_status.as_str() {
+        "pending_review" => {
+            if let Some(user) = &ctx.user {
+                ctx.input["submitted_by"] = serde_json::json!(user.user_id);
+            }
+        }
+        "approved" => {
+            if let Some(user) = &ctx.user {
+                ctx.input["approved_by"] = serde_json::json!(user.user_id);
+            }
+            ctx.input.remove("rejection_reason");
+        }
+        "rejected" => {
+            if let Some(user) = &ctx.user {
+                ctx.input["reviewed_by"] = serde_json::json!(user.user_id);
+            }
+            // Require rejection reason
+            if ctx.input.get("rejection_reason")
+                .and_then(|v| v.as_str())
+                .map_or(true, |s| s.trim().is_empty())
+            {
+                return Err(ShaperailError::Validation(vec![FieldError {
+                    field: "rejection_reason".into(),
+                    message: "rejection reason is required when rejecting".into(),
+                    code: "required_for_rejection".into(),
+                }]));
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+pub async fn notify_stakeholders(ctx: &mut Context) -> ControllerResult {
+    if let Some(data) = &ctx.data {
+        let status = data["status"].as_str().unwrap_or("");
+        let doc_id = data["id"].as_str().unwrap_or("");
+
+        // Add header so clients know a notification was sent
+        ctx.response_headers.push((
+            "X-Notification-Sent".into(),
+            format!("document.{status}"),
+        ));
+    }
+    Ok(())
+}
+```
+
+### Cross-resource validation with transactions
+
+When creating or updating a resource requires checking constraints across
+multiple tables, use `ctx.pool` to run queries within the same connection.
+
+```yaml
+# resources/orders.yaml
+resource: orders
+version: 1
+
+schema:
+  id:           { type: uuid, primary: true, generated: true }
+  user_id:      { type: uuid, ref: users.id, required: true }
+  product_id:   { type: uuid, ref: products.id, required: true }
+  quantity:     { type: integer, min: 1, required: true }
+  total_cents:  { type: bigint, required: true }
+  status:       { type: enum, values: [pending, confirmed, shipped, delivered, cancelled], default: pending }
+  created_at:   { type: timestamp, generated: true }
+  updated_at:   { type: timestamp, generated: true }
+
+endpoints:
+  create:
+    auth: [member, admin]
+    input: [user_id, product_id, quantity]
+    controller:
+      before: validate_and_reserve
+    events: [order.created]
+    jobs: [send_order_confirmation]
+```
+
+```rust
+// resources/orders.controller.rs
+use shaperail_runtime::handlers::controller::{Context, ControllerResult};
+use shaperail_core::{ShaperailError, FieldError};
+
+/// Validate inventory, calculate price, and reserve stock — all in one controller.
+pub async fn validate_and_reserve(ctx: &mut Context) -> ControllerResult {
+    let product_id: uuid::Uuid = serde_json::from_value(
+        ctx.input["product_id"].clone()
+    ).map_err(|_| ShaperailError::Validation(vec![FieldError {
+        field: "product_id".into(),
+        message: "invalid product ID".into(),
+        code: "invalid_uuid".into(),
+    }]))?;
+
+    let quantity: i32 = ctx.input.get("quantity")
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32)
+        .unwrap_or(0);
+
+    // Check product exists and has enough stock
+    let product = sqlx::query_as::<_, (i32, i64, bool)>(
+        "SELECT stock_count, price_cents, is_active FROM products WHERE id = $1"
+    )
+    .bind(product_id)
+    .fetch_optional(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?
+    .ok_or(ShaperailError::Validation(vec![FieldError {
+        field: "product_id".into(),
+        message: "product not found".into(),
+        code: "not_found".into(),
+    }]))?;
+
+    let (stock, price_cents, is_active) = product;
+
+    if !is_active {
+        return Err(ShaperailError::Validation(vec![FieldError {
+            field: "product_id".into(),
+            message: "product is no longer available".into(),
+            code: "product_inactive".into(),
+        }]));
+    }
+
+    if stock < quantity {
+        return Err(ShaperailError::Validation(vec![FieldError {
+            field: "quantity".into(),
+            message: format!("only {} units available", stock),
+            code: "insufficient_stock".into(),
+        }]));
+    }
+
+    // Calculate total and inject into input
+    let total = price_cents * quantity as i64;
+    ctx.input["total_cents"] = serde_json::json!(total);
+
+    // Reserve stock (decrement)
+    sqlx::query("UPDATE products SET stock_count = stock_count - $1 WHERE id = $2")
+        .bind(quantity)
+        .bind(product_id)
+        .execute(&ctx.pool)
+        .await
+        .map_err(|e| ShaperailError::Internal(e.to_string()))?;
+
+    Ok(())
+}
+```
+
+### Comprehensive audit trail
+
+Maintain a complete audit log of every mutation with the user, timestamp, IP,
+and before/after snapshots. Useful for compliance (SOC 2, HIPAA, GDPR).
+
+```yaml
+# resources/accounts.yaml
+resource: accounts
+version: 1
+
+schema:
+  id:         { type: uuid, primary: true, generated: true }
+  name:       { type: string, required: true }
+  balance:    { type: bigint, required: true }
+  status:     { type: enum, values: [active, suspended, closed], default: active }
+  org_id:     { type: uuid, ref: organizations.id, required: true }
+  created_at: { type: timestamp, generated: true }
+  updated_at: { type: timestamp, generated: true }
+
+endpoints:
+  update:
+    auth: [admin]
+    input: [name, balance, status]
+    controller:
+      before: capture_snapshot
+      after: write_audit_log
+```
+
+```rust
+// resources/accounts.controller.rs
+use shaperail_runtime::handlers::controller::{Context, ControllerResult};
+use shaperail_core::ShaperailError;
+
+/// Capture the current state before the update for auditing.
+pub async fn capture_snapshot(ctx: &mut Context) -> ControllerResult {
+    let account_id = ctx.input.get("id")
+        .and_then(|v| v.as_str())
+        .ok_or(ShaperailError::Internal("Missing account id".into()))?;
+
+    let before: serde_json::Value = sqlx::query_scalar(
+        "SELECT row_to_json(a) FROM accounts a WHERE id = $1::uuid"
+    )
+    .bind(account_id)
+    .fetch_one(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?;
+
+    // Stash the snapshot in a response header so the after-controller can read it.
+    // This is a pattern for passing data between before and after controllers.
+    ctx.response_headers.push((
+        "X-Audit-Before".into(),
+        before.to_string(),
+    ));
+
+    Ok(())
+}
+
+/// Write an audit log entry after the update completes.
+pub async fn write_audit_log(ctx: &mut Context) -> ControllerResult {
+    let user_id = ctx.user.as_ref()
+        .map(|u| u.user_id.to_string())
+        .unwrap_or_else(|| "system".to_string());
+
+    let before_json = ctx.response_headers.iter()
+        .find(|(k, _)| k == "X-Audit-Before")
+        .map(|(_, v)| v.clone())
+        .unwrap_or_else(|| "null".to_string());
+
+    // Remove the internal header — clients should not see it
+    ctx.response_headers.retain(|(k, _)| k != "X-Audit-Before");
+
+    let after_json = ctx.data.as_ref()
+        .map(|d| d.to_string())
+        .unwrap_or_else(|| "null".to_string());
+
+    let resource_id = ctx.data.as_ref()
+        .and_then(|d| d["id"].as_str())
+        .unwrap_or("unknown");
+
+    let ip_address = ctx.headers.get("x-forwarded-for")
+        .or_else(|| ctx.headers.get("x-real-ip"))
+        .cloned()
+        .unwrap_or_else(|| "unknown".to_string());
+
+    sqlx::query(
+        "INSERT INTO audit_logs (user_id, resource_type, resource_id, action, before_data, after_data, ip_address, created_at)
+         VALUES ($1, 'accounts', $2, 'update', $3::jsonb, $4::jsonb, $5, NOW())"
+    )
+    .bind(&user_id)
+    .bind(resource_id)
+    .bind(&before_json)
+    .bind(&after_json)
+    .bind(&ip_address)
+    .execute(&ctx.pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to write audit log: {}", e);
+        // Don't fail the request for audit log errors — log and continue
+        ShaperailError::Internal(e.to_string())
+    })?;
+
+    Ok(())
+}
+```
+
+### External service integration (idempotent)
+
+Call an external API (payment processor, identity provider, CRM) during a
+controller, with idempotency keys to prevent double-processing.
+
+```yaml
+# resources/subscriptions.yaml
+resource: subscriptions
+version: 1
+
+schema:
+  id:             { type: uuid, primary: true, generated: true }
+  user_id:        { type: uuid, ref: users.id, required: true }
+  plan:           { type: enum, values: [free, starter, pro, enterprise], required: true }
+  stripe_sub_id:  { type: string, nullable: true }
+  status:         { type: enum, values: [active, past_due, cancelled], default: active }
+  org_id:         { type: uuid, ref: organizations.id, required: true }
+  created_at:     { type: timestamp, generated: true }
+  updated_at:     { type: timestamp, generated: true }
+
+endpoints:
+  create:
+    auth: [admin]
+    input: [user_id, plan, org_id]
+    controller:
+      before: create_stripe_subscription
+    events: [subscription.created]
+
+  update:
+    auth: [admin]
+    input: [plan, status]
+    controller:
+      before: update_stripe_subscription
+    events: [subscription.updated]
+```
+
+```rust
+// resources/subscriptions.controller.rs
+use shaperail_runtime::handlers::controller::{Context, ControllerResult};
+use shaperail_core::{ShaperailError, FieldError};
+
+/// Create a Stripe subscription before saving to our database.
+/// Uses an idempotency key to prevent double charges on retries.
+pub async fn create_stripe_subscription(ctx: &mut Context) -> ControllerResult {
+    let user_id = ctx.input.get("user_id")
+        .and_then(|v| v.as_str())
+        .ok_or(ShaperailError::Validation(vec![FieldError {
+            field: "user_id".into(),
+            message: "user_id is required".into(),
+            code: "required".into(),
+        }]))?;
+
+    let plan = ctx.input.get("plan")
+        .and_then(|v| v.as_str())
+        .ok_or(ShaperailError::Validation(vec![FieldError {
+            field: "plan".into(),
+            message: "plan is required".into(),
+            code: "required".into(),
+        }]))?;
+
+    // Look up user's Stripe customer ID
+    let stripe_customer_id: Option<String> = sqlx::query_scalar(
+        "SELECT stripe_customer_id FROM users WHERE id = $1::uuid"
+    )
+    .bind(user_id)
+    .fetch_optional(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?
+    .flatten();
+
+    let customer_id = stripe_customer_id.ok_or(ShaperailError::Validation(vec![
+        FieldError {
+            field: "user_id".into(),
+            message: "user has no payment method on file".into(),
+            code: "no_payment_method".into(),
+        },
+    ]))?;
+
+    // Map plan to Stripe price ID
+    let price_id = match plan {
+        "starter" => "price_starter_monthly",
+        "pro" => "price_pro_monthly",
+        "enterprise" => "price_enterprise_monthly",
+        "free" => {
+            // Free plan — no Stripe subscription needed
+            ctx.input["stripe_sub_id"] = serde_json::json!(null);
+            return Ok(());
+        }
+        _ => return Err(ShaperailError::Validation(vec![FieldError {
+            field: "plan".into(),
+            message: format!("unknown plan '{plan}'"),
+            code: "invalid_plan".into(),
+        }])),
+    };
+
+    // Generate idempotency key from request ID to prevent double charges
+    let idempotency_key = ctx.headers.get("x-request-id")
+        .cloned()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    // Call Stripe API
+    let client = reqwest::Client::new();
+    let stripe_key = std::env::var("STRIPE_SECRET_KEY")
+        .map_err(|_| ShaperailError::Internal("STRIPE_SECRET_KEY not set".into()))?;
+
+    let response = client
+        .post("https://api.stripe.com/v1/subscriptions")
+        .header("Authorization", format!("Bearer {stripe_key}"))
+        .header("Idempotency-Key", &idempotency_key)
+        .form(&[
+            ("customer", customer_id.as_str()),
+            ("items[0][price]", price_id),
+        ])
+        .send()
+        .await
+        .map_err(|e| ShaperailError::Internal(format!("Stripe API error: {e}")))?;
+
+    if !response.status().is_success() {
+        let body = response.text().await.unwrap_or_default();
+        tracing::error!("Stripe subscription creation failed: {body}");
+        return Err(ShaperailError::Internal(
+            "Payment provider error — please try again".into()
+        ));
+    }
+
+    let stripe_sub: serde_json::Value = response.json().await
+        .map_err(|e| ShaperailError::Internal(format!("Stripe response parse error: {e}")))?;
+
+    // Inject the Stripe subscription ID into the input
+    ctx.input["stripe_sub_id"] = stripe_sub["id"].clone();
+
+    Ok(())
+}
+
+/// Update the Stripe subscription when the plan changes.
+pub async fn update_stripe_subscription(ctx: &mut Context) -> ControllerResult {
+    // Only call Stripe if plan is actually changing
+    let new_plan = match ctx.input.get("plan").and_then(|v| v.as_str()) {
+        Some(p) => p.to_string(),
+        None => return Ok(()),
+    };
+
+    let sub_id_opt: Option<String> = ctx.input.get("id")
+        .and_then(|v| v.as_str())
+        .map(|id| async move {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT stripe_sub_id FROM subscriptions WHERE id = $1::uuid"
+            )
+            .bind(id)
+            .fetch_one(&ctx.pool)
+            .await
+            .ok()
+            .flatten()
+        })
+        .map(|fut| tokio::runtime::Handle::current().block_on(fut))
+        .flatten();
+
+    if let Some(stripe_sub_id) = sub_id_opt {
+        tracing::info!(
+            stripe_sub_id = %stripe_sub_id,
+            new_plan = %new_plan,
+            "Updating Stripe subscription"
+        );
+        // Call Stripe API to update the subscription...
+        // (similar pattern to create_stripe_subscription)
+    }
+
+    Ok(())
+}
+```
+
+### Row-level security beyond tenant_key
+
+For cases where `tenant_key` alone is not sufficient — e.g., department-level
+isolation, project-based access, or hierarchical permissions.
+
+```rust
+// resources/confidential_reports.controller.rs
+use shaperail_runtime::handlers::controller::{Context, ControllerResult};
+use shaperail_core::{ShaperailError, FieldError};
+
+/// Enforce department-level access control.
+/// Users can only see reports from their own department,
+/// managers can see reports from any department in their org.
+pub async fn enforce_department_access(ctx: &mut Context) -> ControllerResult {
+    let user = ctx.user.as_ref()
+        .ok_or(ShaperailError::Unauthorized("Authentication required".into()))?;
+
+    let report_id = ctx.input.get("id")
+        .and_then(|v| v.as_str())
+        .ok_or(ShaperailError::Internal("Missing report id".into()))?;
+
+    // Fetch the report's department
+    let report_dept: String = sqlx::query_scalar(
+        "SELECT department_id FROM confidential_reports WHERE id = $1::uuid"
+    )
+    .bind(report_id)
+    .fetch_one(&ctx.pool)
+    .await
+    .map_err(|_| ShaperailError::NotFound)?;
+
+    // Fetch user's department and manager status
+    let (user_dept, is_manager): (String, bool) = sqlx::query_as(
+        "SELECT department_id, is_manager FROM users WHERE id = $1"
+    )
+    .bind(user.user_id)
+    .fetch_one(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?;
+
+    // Managers can access any department in their org (tenant_key handles org isolation)
+    // Non-managers can only access their own department
+    if !is_manager && user_dept != report_dept {
+        return Err(ShaperailError::Forbidden(
+            "You can only access reports from your own department".into()
+        ));
+    }
+
+    Ok(())
+}
+```
+
+### Data masking based on role
+
+Return different levels of detail depending on the requester's role.
+For example, only admins see full SSNs, everyone else sees `***-**-1234`.
+
+```rust
+// resources/employees.controller.rs
+use shaperail_runtime::handlers::controller::{Context, ControllerResult};
+use shaperail_core::ShaperailError;
+
+/// Mask sensitive fields based on the user's role.
+pub async fn mask_sensitive_fields(ctx: &mut Context) -> ControllerResult {
+    let is_admin = ctx.user.as_ref().map_or(false, |u| u.role == "admin");
+    let is_hr = ctx.user.as_ref().map_or(false, |u| u.role == "hr");
+
+    if let Some(data) = &mut ctx.data {
+        if let Some(obj) = data.as_object_mut() {
+            // SSN: only admin and HR see full value
+            if !is_admin && !is_hr {
+                if let Some(ssn) = obj.get("ssn").and_then(|v| v.as_str()) {
+                    if ssn.len() >= 4 {
+                        let masked = format!("***-**-{}", &ssn[ssn.len()-4..]);
+                        obj["ssn"] = serde_json::json!(masked);
+                    }
+                }
+            }
+
+            // Salary: only admin sees this
+            if !is_admin {
+                obj.remove("salary_cents");
+                obj.remove("bonus_cents");
+            }
+
+            // Home address: only admin and HR
+            if !is_admin && !is_hr {
+                obj.remove("home_address");
+                obj.remove("phone_personal");
+            }
+        }
+    }
+
+    Ok(())
+}
+```
+
+### Rate limiting per operation
+
+Apply custom rate limits beyond the global rate limiter — e.g., limit password
+reset requests to 3 per hour per user, or limit bulk exports.
+
+```rust
+// resources/password_resets.controller.rs
+use shaperail_runtime::handlers::controller::{Context, ControllerResult};
+use shaperail_core::{ShaperailError, FieldError};
+
+/// Custom rate limit: max 3 password reset requests per email per hour.
+pub async fn rate_limit_reset(ctx: &mut Context) -> ControllerResult {
+    let email = ctx.input.get("email")
+        .and_then(|v| v.as_str())
+        .ok_or(ShaperailError::Validation(vec![FieldError {
+            field: "email".into(),
+            message: "email is required".into(),
+            code: "required".into(),
+        }]))?;
+
+    let recent_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM password_resets
+         WHERE email = $1 AND created_at > NOW() - INTERVAL '1 hour'"
+    )
+    .bind(email)
+    .fetch_one(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?;
+
+    if recent_count >= 3 {
+        ctx.response_headers.push((
+            "Retry-After".into(),
+            "3600".into(),
+        ));
+        return Err(ShaperailError::RateLimited(
+            "Too many password reset requests. Try again in 1 hour.".into()
+        ));
+    }
+
+    Ok(())
+}
+```
+
+### Composing multiple validation steps
+
+Since each endpoint supports only one `before` function, compose multiple
+checks within a single controller function:
+
+```rust
+// resources/invoices.controller.rs
+use shaperail_runtime::handlers::controller::{Context, ControllerResult};
+use shaperail_core::ShaperailError;
+
+pub async fn validate_invoice(ctx: &mut Context) -> ControllerResult {
+    validate_customer(ctx).await?;
+    validate_line_items(ctx).await?;
+    calculate_totals(ctx).await?;
+    enforce_credit_limit(ctx).await?;
+    Ok(())
+}
+
+async fn validate_customer(ctx: &mut Context) -> ControllerResult {
+    let customer_id = ctx.input.get("customer_id")
+        .and_then(|v| v.as_str())
+        .ok_or(ShaperailError::Validation(vec![
+            shaperail_core::FieldError {
+                field: "customer_id".into(),
+                message: "customer is required".into(),
+                code: "required".into(),
+            }
+        ]))?;
+
+    let is_active: bool = sqlx::query_scalar(
+        "SELECT is_active FROM customers WHERE id = $1::uuid"
+    )
+    .bind(customer_id)
+    .fetch_optional(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?
+    .unwrap_or(false);
+
+    if !is_active {
+        return Err(ShaperailError::Validation(vec![
+            shaperail_core::FieldError {
+                field: "customer_id".into(),
+                message: "customer account is not active".into(),
+                code: "customer_inactive".into(),
+            }
+        ]));
+    }
+
+    Ok(())
+}
+
+async fn validate_line_items(ctx: &mut Context) -> ControllerResult {
+    let items = ctx.input.get("line_items")
+        .and_then(|v| v.as_array())
+        .ok_or(ShaperailError::Validation(vec![
+            shaperail_core::FieldError {
+                field: "line_items".into(),
+                message: "at least one line item is required".into(),
+                code: "required".into(),
+            }
+        ]))?;
+
+    if items.is_empty() {
+        return Err(ShaperailError::Validation(vec![
+            shaperail_core::FieldError {
+                field: "line_items".into(),
+                message: "at least one line item is required".into(),
+                code: "min_items".into(),
+            }
+        ]));
+    }
+
+    for (i, item) in items.iter().enumerate() {
+        if item.get("quantity").and_then(|v| v.as_i64()).unwrap_or(0) <= 0 {
+            return Err(ShaperailError::Validation(vec![
+                shaperail_core::FieldError {
+                    field: format!("line_items[{i}].quantity"),
+                    message: "quantity must be positive".into(),
+                    code: "min_value".into(),
+                }
+            ]));
+        }
+    }
+
+    Ok(())
+}
+
+async fn calculate_totals(ctx: &mut Context) -> ControllerResult {
+    let items = ctx.input.get("line_items")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let subtotal: i64 = items.iter()
+        .map(|item| {
+            let qty = item["quantity"].as_i64().unwrap_or(0);
+            let price = item["unit_price_cents"].as_i64().unwrap_or(0);
+            qty * price
+        })
+        .sum();
+
+    let tax_rate = 0.08; // 8% — in production, fetch from tax service
+    let tax = (subtotal as f64 * tax_rate) as i64;
+
+    ctx.input["subtotal_cents"] = serde_json::json!(subtotal);
+    ctx.input["tax_cents"] = serde_json::json!(tax);
+    ctx.input["total_cents"] = serde_json::json!(subtotal + tax);
+
+    Ok(())
+}
+
+async fn enforce_credit_limit(ctx: &mut Context) -> ControllerResult {
+    let customer_id = ctx.input.get("customer_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let total = ctx.input.get("total_cents")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+
+    let (credit_limit, outstanding): (i64, i64) = sqlx::query_as(
+        "SELECT c.credit_limit_cents,
+                COALESCE(SUM(i.total_cents) FILTER (WHERE i.status = 'outstanding'), 0)
+         FROM customers c
+         LEFT JOIN invoices i ON i.customer_id = c.id
+         WHERE c.id = $1::uuid
+         GROUP BY c.credit_limit_cents"
+    )
+    .bind(customer_id)
+    .fetch_one(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?;
+
+    if outstanding + total > credit_limit {
+        return Err(ShaperailError::Validation(vec![
+            shaperail_core::FieldError {
+                field: "total_cents".into(),
+                message: format!(
+                    "invoice total ({}) would exceed credit limit ({}). Outstanding: {}",
+                    total, credit_limit, outstanding
+                ),
+                code: "credit_limit_exceeded".into(),
+            }
+        ]));
+    }
+
+    Ok(())
+}
+```
+
+---
+
+## ControllerMap registry
+
+Generated code populates a `ControllerMap` at startup. The map stores
+`(resource_name, function_name) → function` entries and is shared across all
+request handlers via `AppState`.
+
+```rust
+// In your generated main.rs (produced by `shaperail generate`)
+let mut controllers = ControllerMap::new();
+controllers.register("users", "validate_org", users_controller::validate_org);
+controllers.register("users", "enrich_response", users_controller::enrich_response);
+controllers.register("users", "normalize_name", users_controller::normalize_name);
+```
+
+You do not write this wiring by hand — `shaperail generate` reads the YAML
+declarations and emits the registry code.
+
+---
+
 ## Controllers vs jobs vs events
 
 | Mechanism | When it runs | Blocks response | Use case |
@@ -271,6 +1090,18 @@ pub async fn add_deprecation_header(ctx: &mut Context) -> ControllerResult {
 
 Use controllers for logic that must complete before the response is sent. Use
 jobs for work that can happen later. Use events to notify other systems.
+
+---
+
+## What NOT to do in controllers
+
+- **Do NOT spawn new Tokio tasks** — use `ctx.jobs` for background work
+- **Do NOT catch and swallow errors silently** — always propagate or log
+- **Do NOT read `ctx.data` in a before-controller** — it does not exist yet
+- **Do NOT make slow HTTP calls without a timeout** — set timeouts on external requests
+- **Do NOT write to tables without considering rollback** — if the main DB write
+  fails after your controller's side-write, you have inconsistent state.
+  For critical cases, use a transaction via `ctx.pool`.
 
 ---
 
@@ -288,7 +1119,7 @@ endpoints:
   create:
     hooks: [validate_org]
 
-# v0.3.0
+# v0.3.0+
 endpoints:
   create:
     controller:
@@ -314,8 +1145,6 @@ file:
 ```yaml
 endpoints:
   create:
-    method: POST
-    path: /users
     auth: [admin]
     input: [email, name, role, org_id]
     controller:

@@ -159,8 +159,27 @@ pub async fn emit_user_created(ctx: &mut ControllerContext) -> Result<(), Shaper
 }
 ```
 
+## Enterprise Patterns (v0.7.0+)
+
+See `docs/controllers.md` for full enterprise-grade patterns including:
+- Multi-step approval workflows (state machine with role-based transitions)
+- Cross-resource validation with DB queries
+- Comprehensive audit trails (before/after snapshots, IP, user, timestamp)
+- External service integration with idempotency keys (Stripe, etc.)
+- Row-level security beyond tenant_key (department-level, hierarchical)
+- Data masking based on role (SSN masking, salary hiding)
+- Custom per-operation rate limiting
+- Composing multiple validation steps in a single controller
+
+## Generated Controller Traits (v0.7.0+)
+
+`shaperail generate` now produces typed controller traits for resources that
+declare controllers. The trait defines the exact function signatures, and the
+compiler enforces them — LLMs cannot guess wrong signatures.
+
 ## What NOT to Do in Controllers
-- Do NOT make direct HTTP calls (use the job queue instead — controllers must not block)
+- Do NOT make direct HTTP calls without timeouts (use the job queue for slow calls)
 - Do NOT catch and swallow errors silently
 - Do NOT spawn new Tokio tasks (use `ctx.jobs` for background work)
 - Do NOT read `ctx.output` in a `before` function (it does not exist yet)
+- Do NOT write to side tables without considering rollback if the main write fails
