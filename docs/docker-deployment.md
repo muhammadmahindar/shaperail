@@ -8,18 +8,97 @@ Shaperail is Docker-first for local development. Generated apps should boot
 their local dependencies with Compose and should not require manual database
 setup for the first run.
 
-## Local development contract
+## Local development setup
 
-Generated apps include a `docker-compose.yml` that starts:
+### Prerequisites
 
-- PostgreSQL
-- Redis
+- Docker Engine 20+ or Docker Desktop
+- Docker Compose v2 (`docker compose`, not the legacy `docker-compose`)
 
-The generated `.env` matches that compose file, so the default path is:
+### Generated Compose file
+
+`shaperail init` creates a `docker-compose.yml` that starts:
+
+- **PostgreSQL 16** on port 5432
+- **Redis 7** on port 6379
+
+The generated `.env` matches the Compose file, so the default path is:
 
 ```bash
 docker compose up -d
 shaperail serve
+```
+
+### Full local development Compose file
+
+The generated `docker-compose.yml` looks like this:
+
+```yaml
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: shaperail
+      POSTGRES_PASSWORD: shaperail
+      POSTGRES_DB: my_app
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shaperail"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pg_data:
+  redis_data:
+```
+
+### Matching .env file
+
+```text
+DATABASE_URL=postgresql://shaperail:shaperail@localhost:5432/my_app
+REDIS_URL=redis://localhost:6379
+JWT_SECRET=dev-secret-change-in-production
+PORT=3000
+```
+
+### Starting and stopping
+
+```bash
+# Start services in the background
+docker compose up -d
+
+# Check service health
+docker compose ps
+
+# View logs
+docker compose logs -f postgres
+docker compose logs -f redis
+
+# Stop services (preserves data)
+docker compose down
+
+# Stop and remove all data
+docker compose down -v
 ```
 
 ## Standard local URLs
@@ -29,23 +108,7 @@ shaperail serve
 - OpenAPI: `http://localhost:3000/openapi.json`
 - Health: `http://localhost:3000/health`
 
-## If ports are already in use
-
-Change the host-side port mapping in `docker-compose.yml` and update `.env` to
-match. Example:
-
-```yaml
-ports:
-  - "5434:5432"
-```
-
-Then update:
-
-```text
-DATABASE_URL=postgresql://shaperail:shaperail@localhost:5434/my_app
-```
-
-## Release image
+## Building release images with `shaperail build --docker`
 
 Build a release image for a user app with:
 
@@ -53,7 +116,276 @@ Build a release image for a user app with:
 shaperail build --docker
 ```
 
-The framework target is a scratch-based runtime image for the final app.
+### What the build does
+
+1. Compiles the Rust binary in release mode using a multi-stage Dockerfile
+2. Copies the binary into a minimal scratch-based image
+3. Tags the image as `<project-name>:latest`
+
+### Generated Dockerfile
+
+The framework generates a multi-stage Dockerfile:
+
+```dockerfile
+# Stage 1: Build
+FROM rust:1.83-slim AS builder
+WORKDIR /app
+COPY . .
+RUN cargo build --release --bin app
+
+# Stage 2: Runtime
+FROM gcr.io/distroless/cc-debian12 AS runtime
+COPY --from=builder /app/target/release/app /app
+EXPOSE 3000
+ENTRYPOINT ["/app"]
+```
+
+### Build options
+
+```bash
+# Default build
+shaperail build --docker
+
+# Custom tag
+shaperail build --docker --tag my-app:v1.2.0
+
+# Pass build args
+shaperail build --docker --build-arg RUST_LOG=info
+```
+
+### Image size target
+
+The PRD target is a runtime image under 25 MB. The scratch-based final stage
+contains only the compiled binary and its dynamically linked libraries.
+
+### Running the release image locally
+
+```bash
+docker run --rm \
+  -e DATABASE_URL=postgresql://shaperail:shaperail@host.docker.internal:5432/my_app \
+  -e REDIS_URL=redis://host.docker.internal:6379 \
+  -e JWT_SECRET=dev-secret \
+  -p 3000:3000 \
+  my-app:latest
+```
+
+Note: use `host.docker.internal` to reach services running on the Docker host
+(the Compose services). On Linux, you may need `--network host` instead.
+
+## Multi-service Docker Compose
+
+For [workspace]({{ '/multi-service/' | relative_url }}) projects with multiple
+services, extend the Compose file:
+
+```yaml
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: shaperail
+      POSTGRES_PASSWORD: shaperail
+      POSTGRES_DB: my_workspace
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shaperail"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://shaperail:shaperail@postgres:5432/my_workspace
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: dev-secret
+
+  user-service:
+    build:
+      context: ./services/user-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3001:3000"
+    environment:
+      DATABASE_URL: postgresql://shaperail:shaperail@postgres:5432/my_workspace
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: dev-secret
+
+  order-service:
+    build:
+      context: ./services/order-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3002:3000"
+    environment:
+      DATABASE_URL: postgresql://shaperail:shaperail@postgres:5432/my_workspace
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: dev-secret
+
+volumes:
+  pg_data:
+  redis_data:
+```
+
+### Service networking
+
+Inside Compose, services refer to each other by service name. The `api-gateway`
+service connects to Postgres at `postgres:5432`, not `localhost:5432`.
+
+### Running a workspace locally
+
+```bash
+# Start everything
+docker compose up -d
+
+# Or start specific services
+docker compose up -d postgres redis api-gateway
+
+# Or use shaperail workspace mode (requires services running outside Docker)
+shaperail serve --workspace
+```
+
+## Common Docker troubleshooting
+
+### Port conflicts
+
+**Symptom:** `Bind for 0.0.0.0:5432 failed: port is already allocated`
+
+**Fix:** Another process is using the port. Either stop it or change the
+host-side port in `docker-compose.yml`:
+
+```yaml
+ports:
+  - "5434:5432"   # Use 5434 on the host
+```
+
+Then update `.env`:
+
+```text
+DATABASE_URL=postgresql://shaperail:shaperail@localhost:5434/my_app
+```
+
+### Volume permissions
+
+**Symptom:** Postgres fails to start with permission errors on the data
+directory.
+
+**Fix:** Remove the volume and let Docker recreate it:
+
+```bash
+docker compose down -v
+docker compose up -d
+```
+
+This deletes all data. If you need to preserve data, back it up with `pg_dump`
+first.
+
+### Container cannot reach host services
+
+**Symptom:** The app container cannot connect to Postgres or Redis running on
+the host.
+
+**Fix:** Use the special DNS name `host.docker.internal`:
+
+```text
+DATABASE_URL=postgresql://shaperail:shaperail@host.docker.internal:5432/my_app
+```
+
+On Linux without Docker Desktop, add this to the service definition:
+
+```yaml
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+```
+
+### Postgres not ready when app starts
+
+**Symptom:** `shaperail serve` fails with "connection refused" on first boot.
+
+**Fix:** The Compose file includes healthchecks. If you use `depends_on`, use
+the `condition` form:
+
+```yaml
+depends_on:
+  postgres:
+    condition: service_healthy
+```
+
+If running outside Compose, wait for Postgres:
+
+```bash
+until pg_isready -h localhost -p 5432; do sleep 1; done
+shaperail serve
+```
+
+### Redis connection refused
+
+**Symptom:** `Error: Connection refused (os error 111)` when the app tries to
+use cache or jobs.
+
+**Fix:**
+1. Check Redis is running: `docker compose ps`
+2. Check the URL in `.env` matches the Compose port mapping
+3. Test connectivity: `redis-cli -u redis://localhost:6379 ping`
+
+### Build cache issues
+
+**Symptom:** `shaperail build --docker` is slow or uses stale dependencies.
+
+**Fix:** Bust the Docker build cache:
+
+```bash
+shaperail build --docker --no-cache
+```
+
+Or manually:
+
+```bash
+docker build --no-cache -t my-app .
+```
+
+### Large image size
+
+**Symptom:** The built image is larger than the 25 MB target.
+
+**Fix:**
+1. Make sure you are building in release mode (the default)
+2. Check that the final stage uses the scratch or distroless base
+3. Strip the binary: add `strip = true` under `[profile.release]` in
+   `Cargo.toml`
+4. Ensure debug symbols are not included: `debug = false` in release profile
 
 ## Deployment advice
 
@@ -72,3 +404,7 @@ For first deployments:
 | Database and Redis URLs point at real services, not local containers | Separates production runtime from dev wiring |
 | Health checks are wired into your platform | Makes rollout and restart behavior predictable |
 | OpenAPI has been exported and reviewed | Confirms the public contract before launch |
+| `strip = true` in release profile | Keeps binary small |
+| Resource limits set on containers | Prevents runaway memory or CPU usage |
+| Postgres connection pool size matches worker count | Avoids pool exhaustion under load |
+| TLS termination configured at load balancer | Encrypts traffic in transit |

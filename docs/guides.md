@@ -16,8 +16,8 @@ Task-focused guides for building and running a Shaperail application.
 | [**Getting started**]({{ '/getting-started/' | relative_url }}) | Install the CLI, scaffold a project, start Postgres and Redis, run the app, make your first schema change, and troubleshoot. |
 | [**Auth and ownership**]({{ '/auth-and-ownership/' | relative_url }}) | Public, role-based, and owner-based auth; JWT and API keys; rate limiting; recommended patterns for `created_by` and owner checks. |
 | [**Controllers**]({{ '/controllers/' | relative_url }}) | Synchronous business logic before/after DB operations: validation, normalization, response enrichment. ControllerContext API, file conventions, common patterns. Includes WASM plugin support for TypeScript, Python, and other languages. |
-| [**Migrations and schema changes**]({{ '/migrations-and-schema-changes/' | relative_url }}) | Workflow when resources change: validate, migrate, review SQL, rollback. How `shaperail migrate` and `shaperail serve` interact. |
-| [**Docker deployment**]({{ '/docker-deployment/' | relative_url }}) | Local development with Docker Compose, standard URLs, release image with `shaperail build --docker`, production checklist. |
+| [**Migrations and schema changes**]({{ '/migrations-and-schema-changes/' | relative_url }}) | Workflow when resources change: validate, migrate, review SQL, rollback. Concrete migration examples, zero-downtime patterns, handling existing data. |
+| [**Docker deployment**]({{ '/docker-deployment/' | relative_url }}) | Local development with Docker Compose, release images with `shaperail build --docker`, multi-service Compose, troubleshooting ports, volumes, and networking. |
 | [**Caching**]({{ '/caching/' | relative_url }}) | Declaring cache on GET endpoints, cache key format, auto-invalidation, `invalidate_on`, cache bypass, Redis configuration. |
 | [**Background jobs**]({{ '/background-jobs/' | relative_url }}) | Declaring jobs on endpoints, priority levels, lifecycle, retries, dead letter queue, timeout, monitoring with `shaperail jobs:status`. |
 | [**WebSockets**]({{ '/websockets/' | relative_url }}) | Channel YAML, connection and auth, subscribe/unsubscribe, broadcasting, Redis pub/sub for multi-instance, heartbeat, lifecycle hooks. |
@@ -28,5 +28,12 @@ Task-focused guides for building and running a Shaperail application.
 | [**gRPC**]({{ '/grpc/' | relative_url }}) | Enable with `protocols: [rest, grpc]`. Auto-generated `.proto` files, unary and streaming RPCs, JWT auth via metadata, server reflection, health checks. |
 | [**Multi-service workspaces**]({{ '/multi-service/' | relative_url }}) | Define a `shaperail.workspace.yaml` with multiple services. Service registry via Redis, typed inter-service clients, `shaperail serve --workspace`, distributed sagas. |
 | [**Multi-tenancy**]({{ '/multi-tenancy/' | relative_url }}) | Add `tenant_key` to resources for automatic row-level isolation. JWT `tenant_id` claim, per-tenant cache and rate limits, `super_admin` bypass. |
+| [**Error handling**]({{ '/error-handling/' | relative_url }}) | ShaperailError types, error response format, validation errors, custom error codes, controller error handling. |
+| [**Testing**]({{ '/testing/' | relative_url }}) | Testing resources, controllers, and jobs. Unit tests, integration tests with test databases, snapshot testing for generated code. |
+| [**Security**]({{ '/security/' | relative_url }}) | Security by default (SQL injection, validation, redaction), JWT and API key best practices, rate limiting, CORS, multi-tenancy isolation, webhook signing, production checklist. |
+| [**Deployment**]({{ '/deployment/' | relative_url }}) | Production deployment patterns: Docker, Kubernetes, managed platforms. Environment variables, health checks, scaling. |
+| [**Performance**]({{ '/performance/' | relative_url }}) | Tuning worker count, connection pools, caching strategies, query optimization, benchmarking with `cargo bench`. |
+| [**Debugging**]({{ '/debugging/' | relative_url }}) | Using `shaperail doctor`, reading structured logs, tracing requests, inspecting generated code, common debugging workflows. |
+| [**API versioning**]({{ '/api-versioning/' | relative_url }}) | How the `version` field maps to URL prefixes, running multiple versions side by side, deprecation headers, client migration strategies. |
 
-Pick a guide by task: auth, migrations, Docker, caching, jobs, WebSockets, files, events, observability, GraphQL, gRPC, multi-service, or multi-tenancy.
+Pick a guide by task: auth, migrations, Docker, caching, jobs, WebSockets, files, events, observability, GraphQL, gRPC, multi-service, multi-tenancy, error handling, testing, security, deployment, performance, debugging, or API versioning.

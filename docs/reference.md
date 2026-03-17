@@ -17,5 +17,6 @@ Canonical reference for the Shaperail resource format, project configuration, CL
 | [**CLI reference**]({{ '/cli-reference/' | relative_url }}) | All `shaperail` commands: init, generate, validate, migrate, seed, serve, build, export openapi/sdk, doctor, routes, jobs:status. |
 | [**Configuration reference**]({{ '/configuration/' | relative_url }}) | `shaperail.config.yaml`: project, port, workers, database, databases (multi-DB), cache, auth, storage, logging, events. Environment variable interpolation. |
 | [**API responses and query parameters**]({{ '/api-responses/' | relative_url }}) | Response envelope (data/meta), error format, filtering, sorting, search, pagination (cursor/offset), field selection, relation loading, cache bypass. |
+| [**Resource archetypes**]({{ '/archetypes/' | relative_url }}) | The 5 resource archetypes (basic, user, content, tenant, lookup): fields, endpoints, relations, indexes, and when to use each. |
 
 Use these pages when you need the exact syntax, allowed values, or behavior of a feature.
