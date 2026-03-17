@@ -1,0 +1,29 @@
+- id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+  org_id: "11111111-1111-1111-1111-111111111111"
+  name: "Acme Corp"
+  email: "billing@acme.com"
+  plan: enterprise
+  credit_limit_cents: 10000000
+  stripe_customer_id: "cus_acme_enterprise"
+  status: active
+  created_by: "00000000-0000-0000-0000-000000000001"
+
+- id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+  org_id: "11111111-1111-1111-1111-111111111111"
+  name: "Widgets LLC"
+  email: "accounts@widgets.io"
+  plan: starter
+  credit_limit_cents: 50000
+  stripe_customer_id: null
+  status: active
+  created_by: "00000000-0000-0000-0000-000000000001"
+
+- id: "cccccccc-cccc-cccc-cccc-cccccccccccc"
+  org_id: "11111111-1111-1111-1111-111111111111"
+  name: "Dormant Inc"
+  email: "hello@dormant.co"
+  plan: free
+  credit_limit_cents: 0
+  stripe_customer_id: null
+  status: suspended
+  created_by: "00000000-0000-0000-0000-000000000001"

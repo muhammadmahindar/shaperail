@@ -1,0 +1,130 @@
+use shaperail_core::{FieldError, ShaperailError};
+use shaperail_runtime::handlers::controller::{Context, ControllerResult};
+use tracing::info;
+
+/// Blocked email domains that cannot be used for registration.
+const BLOCKED_DOMAINS: &[&str] = &["tempmail.com", "throwaway.io", "fakeinbox.net"];
+
+/// Before-create: normalize email, hash password, validate domain, set default role.
+pub async fn prepare_user(ctx: &mut Context) -> ControllerResult {
+    // Normalize email to lowercase.
+    let email = ctx
+        .input
+        .get("email")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            ShaperailError::Validation(vec![FieldError {
+                field: "email".to_string(),
+                message: "Email is required".to_string(),
+                code: "required".to_string(),
+            }])
+        })?
+        .to_lowercase();
+
+    // Validate email domain is not in the blocked list.
+    let domain = email.rsplit('@').next().unwrap_or("");
+    if BLOCKED_DOMAINS.contains(&domain) {
+        return Err(ShaperailError::Validation(vec![FieldError {
+            field: "email".to_string(),
+            message: format!("Email domain '{domain}' is not allowed"),
+            code: "blocked_domain".to_string(),
+        }]));
+    }
+    ctx.input["email"] = serde_json::json!(email);
+
+    // Hash password if provided (bcrypt, cost factor 12).
+    if let Some(password) = ctx.input.get("password").and_then(|v| v.as_str()) {
+        let hash = bcrypt::hash(password, 12).map_err(|e| {
+            ShaperailError::Internal(format!("Password hashing failed: {e}"))
+        })?;
+        ctx.input
+            .insert("password_hash".to_string(), serde_json::json!(hash));
+        ctx.input.remove("password");
+    }
+
+    // Set default role to "member" if not explicitly provided.
+    if !ctx.input.contains_key("role") {
+        ctx.input
+            .insert("role".to_string(), serde_json::json!("member"));
+    }
+
+    Ok(())
+}
+
+/// After-create: log user creation and add X-User-Created response header.
+pub async fn provision_defaults(ctx: &mut Context) -> ControllerResult {
+    let user_id = ctx
+        .data
+        .as_ref()
+        .and_then(|d| d.get("id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+
+    let request_id = ctx
+        .headers
+        .get("x-request-id")
+        .cloned()
+        .unwrap_or_default();
+
+    info!(
+        user_id = user_id,
+        request_id = request_id.as_str(),
+        "New user created"
+    );
+
+    ctx.response_headers.push((
+        "X-User-Created".to_string(),
+        user_id.to_string(),
+    ));
+
+    Ok(())
+}
+
+/// Before-update: enforce role-change restrictions.
+///
+/// Rules:
+/// - Non-admins cannot change their own role.
+/// - Cannot deactivate the last admin in the system.
+pub async fn validate_user_update(ctx: &mut Context) -> ControllerResult {
+    let caller = ctx.user.as_ref().ok_or(ShaperailError::Unauthorized)?;
+
+    // If the request is changing the role field, apply restrictions.
+    if let Some(new_role) = ctx.input.get("role").and_then(|v| v.as_str()) {
+        // Non-admins cannot change their own role.
+        if caller.role != "admin" {
+            return Err(ShaperailError::Validation(vec![FieldError {
+                field: "role".to_string(),
+                message: "Only admins can change user roles".to_string(),
+                code: "insufficient_permissions".to_string(),
+            }]));
+        }
+
+        // Cannot demote the last admin. Check how many admins exist.
+        if new_role != "admin" {
+            let current_role = ctx
+                .data
+                .as_ref()
+                .and_then(|d| d.get("role"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if current_role == "admin" {
+                let admin_count: (i64,) =
+                    sqlx::query_as("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+                        .fetch_one(&ctx.pool)
+                        .await
+                        .map_err(|e| ShaperailError::Internal(e.to_string()))?;
+
+                if admin_count.0 <= 1 {
+                    return Err(ShaperailError::Validation(vec![FieldError {
+                        field: "role".to_string(),
+                        message: "Cannot remove the last admin from the system".to_string(),
+                        code: "last_admin".to_string(),
+                    }]));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}

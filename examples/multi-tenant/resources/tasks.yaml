@@ -28,10 +28,15 @@ endpoints:
   create:
     auth: [member, admin]
     input: [project_id, title, priority, assigned_to, created_by]
+    controller:
+      before: validate_task
 
   update:
     auth: [member, admin]
     input: [title, priority, status, assigned_to]
+    controller:
+      before: enforce_task_rules
+      after: notify_assignee
 
   delete:
     auth: [admin, owner]

@@ -1,0 +1,48 @@
+resource: customers
+version: 1
+tenant_key: org_id
+
+schema:
+  id:                 { type: uuid, primary: true, generated: true }
+  org_id:             { type: uuid, required: true }
+  name:               { type: string, min: 1, max: 200, required: true }
+  email:              { type: string, format: email, required: true }
+  plan:               { type: enum, values: [free, starter, pro, enterprise], default: free }
+  credit_limit_cents: { type: bigint, default: 0 }
+  stripe_customer_id: { type: string, nullable: true }
+  status:             { type: enum, values: [active, suspended, closed], default: active }
+  created_by:         { type: uuid, required: true }
+  created_at:         { type: timestamp, generated: true }
+  updated_at:         { type: timestamp, generated: true }
+
+endpoints:
+  list:
+    auth: [member, admin]
+    filters: [plan, status]
+    search: [name, email]
+    pagination: cursor
+    cache: { ttl: 60 }
+
+  get:
+    auth: [member, admin]
+
+  create:
+    auth: [admin]
+    input: [name, email, plan, credit_limit_cents, stripe_customer_id]
+    controller:
+      before: validate_customer
+
+  update:
+    auth: [admin]
+    input: [name, email, plan, credit_limit_cents, stripe_customer_id, status]
+    controller:
+      before: enforce_plan_change
+
+  delete:
+    auth: [admin]
+    soft_delete: true
+
+indexes:
+  - { fields: [org_id, email], unique: true }
+  - { fields: [org_id, plan] }
+  - { fields: [org_id, status] }

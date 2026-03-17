@@ -19,3 +19,11 @@ endpoints:
   create:
     auth: [super_admin]
     input: [name, plan]
+    controller:
+      before: validate_org_creation
+
+  update:
+    auth: [super_admin]
+    input: [name, plan]
+    controller:
+      before: enforce_plan_rules

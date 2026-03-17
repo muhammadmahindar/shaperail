@@ -7,7 +7,7 @@ schema:
   title:        { type: string, min: 1, max: 200, required: true }
   slug:         { type: string, min: 1, max: 200, required: true, unique: true }
   body:         { type: string, required: true }
-  status:       { type: enum, values: [draft, published], default: draft }
+  status:       { type: enum, values: [draft, published, archived], default: draft }
   created_by:   { type: uuid, required: true }
   published_at: { type: timestamp, nullable: true }
   created_at:   { type: timestamp, generated: true }
@@ -28,15 +28,19 @@ endpoints:
     auth: [admin, member]
     input: [title, slug, body, status, created_by, published_at]
     controller:
-      before: set_created_by
+      before: prepare_post
 
   update:
     auth: [admin, owner]
     input: [title, body, status, published_at]
+    controller:
+      before: enforce_edit_rules
 
   delete:
     auth: [admin]
     soft_delete: true
+    controller:
+      after: cleanup_comments
 
 relations:
   comments: { resource: comments, type: has_many, foreign_key: post_id }

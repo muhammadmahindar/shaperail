@@ -1,0 +1,43 @@
+resource: payments
+version: 1
+tenant_key: org_id
+
+schema:
+  id:               { type: uuid, primary: true, generated: true }
+  org_id:           { type: uuid, required: true }
+  invoice_id:       { type: uuid, ref: invoices.id, required: true }
+  amount_cents:     { type: bigint, required: true }
+  method:           { type: enum, values: [card, bank_transfer, check], required: true }
+  reference_number: { type: string, nullable: true }
+  status:           { type: enum, values: [pending, completed, failed, refunded], default: pending }
+  processed_by:     { type: uuid, required: true }
+  created_at:       { type: timestamp, generated: true }
+  updated_at:       { type: timestamp, generated: true }
+
+endpoints:
+  list:
+    auth: [member, admin, finance]
+    filters: [invoice_id, status, method]
+    pagination: cursor
+
+  get:
+    auth: [member, admin, finance]
+
+  create:
+    auth: [admin, finance]
+    input: [invoice_id, amount_cents, method, reference_number]
+    controller:
+      before: validate_payment
+
+  update:
+    auth: [admin, finance]
+    input: [status, reference_number]
+    controller:
+      before: enforce_payment_rules
+
+relations:
+  invoice: { resource: invoices, type: belongs_to, key: invoice_id }
+
+indexes:
+  - { fields: [org_id, invoice_id] }
+  - { fields: [org_id, status] }

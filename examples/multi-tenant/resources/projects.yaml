@@ -26,10 +26,14 @@ endpoints:
     auth: [member, admin]
     input: [name, status, created_by]
     events: [project.created]
+    controller:
+      before: validate_project
 
   update:
     auth: [admin, owner]
     input: [name, status]
+    controller:
+      before: enforce_project_status
 
   delete:
     auth: [admin]

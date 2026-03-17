@@ -5,44 +5,250 @@
 ### Setup: create organizations (as super_admin)
 ### ---
 
-### Create Acme Corp
+### Create Acme Corp (triggers validate_org_creation: sets default plan to "free")
 POST http://localhost:3000/v1/organizations
 Authorization: Bearer {{super_admin_token}}
 Content-Type: application/json
 
 {
-  "name": "Acme Corp",
-  "plan": "pro"
+  "name": "Acme Corp"
 }
 
-### Create Widgets Inc
+### Create Widgets Inc on pro plan
 POST http://localhost:3000/v1/organizations
 Authorization: Bearer {{super_admin_token}}
 Content-Type: application/json
 
 {
   "name": "Widgets Inc",
+  "plan": "pro"
+}
+
+### Create GlobalTech on enterprise plan
+POST http://localhost:3000/v1/organizations
+Authorization: Bearer {{super_admin_token}}
+Content-Type: application/json
+
+{
+  "name": "GlobalTech",
   "plan": "enterprise"
 }
 
+### Fail: duplicate org name (case-insensitive uniqueness)
+POST http://localhost:3000/v1/organizations
+Authorization: Bearer {{super_admin_token}}
+Content-Type: application/json
+
+{
+  "name": "  acme corp  "
+}
+
 ### ---
-### Tenant A (Acme Corp) operations — uses a token with tenant_id = Acme's org UUID
+### Plan transition enforcement (enforce_plan_rules)
 ### ---
 
-### Create a project (org_id auto-injected from JWT tenant_id)
+### Upgrade Acme Corp from free to pro
+PATCH http://localhost:3000/v1/organizations/{{acme_org_id}}
+Authorization: Bearer {{super_admin_token}}
+Content-Type: application/json
+
+{
+  "plan": "pro"
+}
+
+### Fail: skip from free directly to enterprise
+PATCH http://localhost:3000/v1/organizations/{{acme_org_id}}
+Authorization: Bearer {{super_admin_token}}
+Content-Type: application/json
+
+{
+  "plan": "enterprise"
+}
+
+### Fail: downgrade from enterprise to free
+PATCH http://localhost:3000/v1/organizations/{{globaltech_org_id}}
+Authorization: Bearer {{super_admin_token}}
+Content-Type: application/json
+
+{
+  "plan": "free"
+}
+
+### ---
+### Tenant A (Acme Corp, free plan) — project limit enforcement
+### ---
+
+### Create project 1 (validate_project: auto-fills created_by from JWT)
 POST http://localhost:3000/v1/projects
 Authorization: Bearer {{acme_member_token}}
 Content-Type: application/json
 
 {
-  "name": "Website Redesign",
-  "status": "active",
-  "created_by": "user-acme-1"
+  "name": "Website Redesign"
+}
+
+### Create project 2
+POST http://localhost:3000/v1/projects
+Authorization: Bearer {{acme_member_token}}
+Content-Type: application/json
+
+{
+  "name": "Mobile App"
+}
+
+### Create project 3
+POST http://localhost:3000/v1/projects
+Authorization: Bearer {{acme_member_token}}
+Content-Type: application/json
+
+{
+  "name": "API Platform"
+}
+
+### Fail: project 4 exceeds free plan limit (max 3)
+POST http://localhost:3000/v1/projects
+Authorization: Bearer {{acme_member_token}}
+Content-Type: application/json
+
+{
+  "name": "Data Pipeline"
+}
+
+### Fail: duplicate project name within org
+POST http://localhost:3000/v1/projects
+Authorization: Bearer {{acme_member_token}}
+Content-Type: application/json
+
+{
+  "name": "Website Redesign"
 }
 
 ### List projects — only sees Acme Corp's projects
 GET http://localhost:3000/v1/projects
 Authorization: Bearer {{acme_member_token}}
+
+### ---
+### Project status enforcement (enforce_project_status)
+### ---
+
+### Fail: non-admin tries to archive a project
+PATCH http://localhost:3000/v1/projects/{{acme_project_id}}
+Authorization: Bearer {{acme_member_token}}
+Content-Type: application/json
+
+{
+  "status": "archived"
+}
+
+### Admin archives a project (checks for in-progress tasks first)
+PATCH http://localhost:3000/v1/projects/{{acme_project_id}}
+Authorization: Bearer {{acme_admin_token}}
+Content-Type: application/json
+
+{
+  "status": "archived"
+}
+
+### Fail: reopen an archived project
+PATCH http://localhost:3000/v1/projects/{{acme_project_id}}
+Authorization: Bearer {{acme_admin_token}}
+Content-Type: application/json
+
+{
+  "status": "active"
+}
+
+### ---
+### Task controllers (validate_task, enforce_task_rules, notify_assignee)
+### ---
+
+### Create a task (auto-fills created_by, defaults priority to "medium")
+POST http://localhost:3000/v1/tasks
+Authorization: Bearer {{acme_member_token}}
+Content-Type: application/json
+
+{
+  "project_id": "{{acme_active_project_id}}",
+  "title": "Design homepage mockups"
+}
+
+### Create a task with explicit assignment
+POST http://localhost:3000/v1/tasks
+Authorization: Bearer {{acme_member_token}}
+Content-Type: application/json
+
+{
+  "project_id": "{{acme_active_project_id}}",
+  "title": "Implement auth flow",
+  "priority": "high",
+  "assigned_to": "{{acme_user_id}}"
+}
+
+### Fail: create task in archived project
+POST http://localhost:3000/v1/tasks
+Authorization: Bearer {{acme_member_token}}
+Content-Type: application/json
+
+{
+  "project_id": "{{acme_archived_project_id}}",
+  "title": "This should fail"
+}
+
+### Fail: assign task to user in different org
+POST http://localhost:3000/v1/tasks
+Authorization: Bearer {{acme_member_token}}
+Content-Type: application/json
+
+{
+  "project_id": "{{acme_active_project_id}}",
+  "title": "Cross-org assignment",
+  "assigned_to": "{{widgets_user_id}}"
+}
+
+### Move task to in_progress (valid: todo -> in_progress)
+PATCH http://localhost:3000/v1/tasks/{{task_id}}
+Authorization: Bearer {{acme_member_token}}
+Content-Type: application/json
+
+{
+  "status": "in_progress"
+}
+
+### Fail: skip status (todo -> done)
+PATCH http://localhost:3000/v1/tasks/{{task_id_todo}}
+Authorization: Bearer {{acme_member_token}}
+Content-Type: application/json
+
+{
+  "status": "done"
+}
+
+### Mark task as done (only assignee or admin — adds X-Completed-By header)
+PATCH http://localhost:3000/v1/tasks/{{task_id}}
+Authorization: Bearer {{acme_member_token}}
+Content-Type: application/json
+
+{
+  "status": "done"
+}
+
+### Fail: reassign a completed task
+PATCH http://localhost:3000/v1/tasks/{{task_id}}
+Authorization: Bearer {{acme_member_token}}
+Content-Type: application/json
+
+{
+  "assigned_to": "{{another_user_id}}"
+}
+
+### Reassign an in-progress task (triggers X-Notification header)
+PATCH http://localhost:3000/v1/tasks/{{task_id_in_progress}}
+Authorization: Bearer {{acme_admin_token}}
+Content-Type: application/json
+
+{
+  "assigned_to": "{{acme_user_id}}"
+}
 
 ### ---
 ### Tenant B (Widgets Inc) operations
@@ -54,13 +260,8 @@ Authorization: Bearer {{widgets_member_token}}
 Content-Type: application/json
 
 {
-  "name": "Inventory System",
-  "created_by": "user-widgets-1"
+  "name": "Inventory System"
 }
-
-### List projects — only sees Widgets Inc's projects
-GET http://localhost:3000/v1/projects
-Authorization: Bearer {{widgets_member_token}}
 
 ### Try to get Acme's project — returns 404 (tenant isolation)
 GET http://localhost:3000/v1/projects/{{acme_project_id}}

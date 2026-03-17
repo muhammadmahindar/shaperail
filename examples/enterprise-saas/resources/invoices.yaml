@@ -1,0 +1,54 @@
+resource: invoices
+version: 1
+tenant_key: org_id
+
+schema:
+  id:             { type: uuid, primary: true, generated: true }
+  org_id:         { type: uuid, required: true }
+  customer_id:    { type: uuid, ref: customers.id, required: true }
+  invoice_number: { type: string, unique: true, required: true }
+  status:         { type: enum, values: [draft, pending, sent, paid, overdue, void], default: draft }
+  subtotal_cents: { type: bigint, required: true }
+  tax_cents:      { type: bigint, default: 0 }
+  total_cents:    { type: bigint, required: true }
+  due_date:       { type: date, required: true }
+  sent_at:        { type: timestamp, nullable: true }
+  paid_at:        { type: timestamp, nullable: true }
+  created_by:     { type: uuid, required: true }
+  created_at:     { type: timestamp, generated: true }
+  updated_at:     { type: timestamp, generated: true }
+
+endpoints:
+  list:
+    auth: [member, admin, finance]
+    filters: [customer_id, status]
+    sort: [created_at, due_date]
+    pagination: cursor
+
+  get:
+    auth: [member, admin, finance]
+
+  create:
+    auth: [admin, finance]
+    input: [customer_id, subtotal_cents, tax_cents, total_cents, due_date]
+    controller:
+      before: prepare_invoice
+
+  update:
+    auth: [admin, finance]
+    input: [status, subtotal_cents, tax_cents, total_cents, due_date]
+    controller:
+      before: enforce_invoice_workflow
+      after: audit_invoice_change
+
+  delete:
+    auth: [admin]
+    soft_delete: true
+
+relations:
+  customer: { resource: customers, type: belongs_to, key: customer_id }
+
+indexes:
+  - { fields: [org_id, customer_id] }
+  - { fields: [org_id, status] }
+  - { fields: [due_date] }

@@ -28,12 +28,14 @@ endpoints:
     path: /orders
     auth: [member, admin]
     input: [user_id, total, status]
+    controller: { before: validate_order }
 
   update:
     method: PATCH
     path: /orders/:id
     auth: [admin]
     input: [status]
+    controller: { before: enforce_order_status }
 
 relations:
   user: { resource: users, type: belongs_to, key: user_id }

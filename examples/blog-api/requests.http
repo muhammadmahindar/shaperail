@@ -1,34 +1,190 @@
+### ============================================================
+### Posts
+### ============================================================
+
 ### Public list of posts
 GET http://localhost:3000/v1/posts
 
 ### Public single post
 GET http://localhost:3000/v1/posts/00000000-0000-0000-0000-000000000000
 
-### Create a post (requires JWT or API key auth)
+### Create a post — prepare_post auto-fills created_by and generates slug
 POST http://localhost:3000/v1/posts
-Authorization: Bearer <token>
+Authorization: Bearer <member-token>
 Content-Type: application/json
 
 {
   "title": "Hello Shaperail",
-  "slug": "hello-shaperail",
   "body": "This post was created from the blog-api example.",
-  "status": "published",
-  "created_by": "11111111-1111-1111-1111-111111111111",
-  "published_at": "2026-01-01T00:00:00Z"
+  "status": "draft"
 }
 
-### List comments for a post
-GET http://localhost:3000/v1/comments?filter[post_id]=00000000-0000-0000-0000-000000000000
-
-### Create a comment (requires JWT or API key auth)
-POST http://localhost:3000/v1/comments
-Authorization: Bearer <token>
+### Create a post — status defaults to "draft" when omitted
+POST http://localhost:3000/v1/posts
+Authorization: Bearer <member-token>
 Content-Type: application/json
 
 {
-  "post_id": "00000000-0000-0000-0000-000000000000",
-  "body": "Great article.",
-  "author_name": "Mahin",
-  "created_by": "11111111-1111-1111-1111-111111111111"
+  "title": "Second Post!",
+  "body": "Status will default to draft because we did not specify it."
 }
+
+### Create a post — FAILS: empty body
+POST http://localhost:3000/v1/posts
+Authorization: Bearer <member-token>
+Content-Type: application/json
+
+{
+  "title": "Bad Post",
+  "body": "   "
+}
+
+### Update a post — member tries to publish (FAILS: only admins can publish)
+PATCH http://localhost:3000/v1/posts/00000000-0000-0000-0000-000000000001
+Authorization: Bearer <member-token>
+Content-Type: application/json
+
+{
+  "status": "published"
+}
+
+### Update a post — admin publishes successfully
+PATCH http://localhost:3000/v1/posts/00000000-0000-0000-0000-000000000001
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+  "status": "published"
+}
+
+### Update a post — revert published to draft WITHOUT reason header (FAILS)
+PATCH http://localhost:3000/v1/posts/00000000-0000-0000-0000-000000000001
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+  "status": "draft"
+}
+
+### Update a post — revert published to draft WITH reason header (succeeds)
+PATCH http://localhost:3000/v1/posts/00000000-0000-0000-0000-000000000001
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+X-Edit-Reason: Needs factual corrections before republishing
+
+{
+  "status": "draft"
+}
+
+### Update a post — title change auto-updates slug
+PATCH http://localhost:3000/v1/posts/00000000-0000-0000-0000-000000000001
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+  "title": "Updated Title Here"
+}
+
+### Update an archived post (FAILS: archived posts cannot be edited)
+PATCH http://localhost:3000/v1/posts/00000000-0000-0000-0000-000000000002
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+  "title": "Trying to edit archived"
+}
+
+### Delete a post — cleanup_comments adds X-Comments-Archived header
+DELETE http://localhost:3000/v1/posts/00000000-0000-0000-0000-000000000001
+Authorization: Bearer <admin-token>
+
+### ============================================================
+### Comments
+### ============================================================
+
+### List comments for a post
+GET http://localhost:3000/v1/comments?filter[post_id]=00000000-0000-0000-0000-000000000001
+
+### Create a comment on a published post (succeeds)
+POST http://localhost:3000/v1/comments
+Authorization: Bearer <member-token>
+Content-Type: application/json
+
+{
+  "post_id": "00000000-0000-0000-0000-000000000001",
+  "body": "Great article!",
+  "author_name": "Mahin"
+}
+
+### Create a comment on a draft post (FAILS: post_not_published)
+POST http://localhost:3000/v1/comments
+Authorization: Bearer <member-token>
+Content-Type: application/json
+
+{
+  "post_id": "00000000-0000-0000-0000-000000000003",
+  "body": "This should fail because the post is still a draft.",
+  "author_name": "Mahin"
+}
+
+### Create a comment with HTML in body (tags get stripped)
+POST http://localhost:3000/v1/comments
+Authorization: Bearer <member-token>
+Content-Type: application/json
+
+{
+  "post_id": "00000000-0000-0000-0000-000000000001",
+  "body": "Nice post! <script>alert('xss')</script> Really enjoyed it.",
+  "author_name": "Mahin"
+}
+
+### Create a comment — FAILS if body is only HTML tags
+POST http://localhost:3000/v1/comments
+Authorization: Bearer <member-token>
+Content-Type: application/json
+
+{
+  "post_id": "00000000-0000-0000-0000-000000000001",
+  "body": "<script>alert('xss')</script>",
+  "author_name": "Mahin"
+}
+
+### Update own comment within 15-minute window (succeeds)
+PATCH http://localhost:3000/v1/comments/00000000-0000-0000-0000-000000000010
+Authorization: Bearer <member-token>
+Content-Type: application/json
+
+{
+  "body": "Updated my comment."
+}
+
+### Update someone else's comment as non-admin (FAILS: 403 Forbidden)
+PATCH http://localhost:3000/v1/comments/00000000-0000-0000-0000-000000000010
+Authorization: Bearer <other-member-token>
+Content-Type: application/json
+
+{
+  "body": "Trying to edit someone else's comment."
+}
+
+### Update old comment as non-admin (FAILS: edit_window_expired)
+PATCH http://localhost:3000/v1/comments/00000000-0000-0000-0000-000000000099
+Authorization: Bearer <member-token>
+Content-Type: application/json
+
+{
+  "body": "This comment is older than 15 minutes."
+}
+
+### Update old comment as admin (succeeds — admins bypass edit window)
+PATCH http://localhost:3000/v1/comments/00000000-0000-0000-0000-000000000099
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+  "body": "Admin can edit any comment regardless of age."
+}
+
+### Delete a comment
+DELETE http://localhost:3000/v1/comments/00000000-0000-0000-0000-000000000010
+Authorization: Bearer <admin-token>

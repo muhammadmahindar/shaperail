@@ -1,0 +1,248 @@
+### ============================================================
+### Enterprise SaaS — Billing & Subscription Example
+### ============================================================
+### Variables (adjust to match your local JWT tokens)
+### Admin token:   role=admin, org_id=11111111-...
+### Finance token: role=finance, org_id=11111111-...
+### Member token:  role=member, org_id=11111111-...
+### ============================================================
+
+@base = http://localhost:3000/v1
+@admin_token = Bearer <admin-jwt-token>
+@finance_token = Bearer <finance-jwt-token>
+@member_token = Bearer <member-jwt-token>
+
+### ============================================================
+### 1. CUSTOMERS
+### ============================================================
+
+### Create a new customer (admin)
+POST {{base}}/customers
+Authorization: {{admin_token}}
+Content-Type: application/json
+
+{
+  "name": "NewCo Industries",
+  "email": "billing@newco.com",
+  "plan": "starter",
+  "credit_limit_cents": 50000
+}
+
+### List customers — filter by plan
+GET {{base}}/customers?filter[plan]=starter
+Authorization: {{admin_token}}
+
+### List customers — search by name
+GET {{base}}/customers?search=Acme
+Authorization: {{admin_token}}
+
+### Try to create customer with credit limit exceeding plan
+### (should fail: free plan max is 0)
+POST {{base}}/customers
+Authorization: {{admin_token}}
+Content-Type: application/json
+
+{
+  "name": "Cheapskate Ltd",
+  "email": "info@cheapskate.com",
+  "plan": "free",
+  "credit_limit_cents": 10000
+}
+
+### Try to skip plan tiers (free -> pro, should fail)
+PATCH {{base}}/customers/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb
+Authorization: {{admin_token}}
+Content-Type: application/json
+
+{
+  "plan": "pro"
+}
+
+### Valid plan upgrade (starter -> pro)
+PATCH {{base}}/customers/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb
+Authorization: {{admin_token}}
+Content-Type: application/json
+
+{
+  "plan": "pro"
+}
+
+### ============================================================
+### 2. INVOICES
+### ============================================================
+
+### Create a draft invoice (auto-generates invoice_number)
+POST {{base}}/invoices
+Authorization: {{finance_token}}
+Content-Type: application/json
+
+{
+  "customer_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  "subtotal_cents": 100000,
+  "tax_cents": 8000,
+  "total_cents": 108000,
+  "due_date": "2026-04-15"
+}
+
+### Try to send invoice as member (should fail: insufficient role)
+### Replace <invoice-id> with the ID returned from create above
+PATCH {{base}}/invoices/<invoice-id>
+Authorization: {{member_token}}
+Content-Type: application/json
+
+{
+  "status": "sent"
+}
+
+### Move invoice from draft to pending (finance)
+PATCH {{base}}/invoices/<invoice-id>
+Authorization: {{finance_token}}
+Content-Type: application/json
+
+{
+  "status": "pending"
+}
+
+### Send invoice (pending -> sent, finance role)
+PATCH {{base}}/invoices/<invoice-id>
+Authorization: {{finance_token}}
+Content-Type: application/json
+
+{
+  "status": "sent"
+}
+
+### Try invalid transition: sent -> draft (should fail)
+PATCH {{base}}/invoices/<invoice-id>
+Authorization: {{finance_token}}
+Content-Type: application/json
+
+{
+  "status": "draft"
+}
+
+### Try to void as non-admin (should fail)
+PATCH {{base}}/invoices/<invoice-id>
+Authorization: {{finance_token}}
+Content-Type: application/json
+
+{
+  "status": "void"
+}
+
+### Try to create invoice for suspended customer (should fail)
+POST {{base}}/invoices
+Authorization: {{finance_token}}
+Content-Type: application/json
+
+{
+  "customer_id": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+  "subtotal_cents": 5000,
+  "tax_cents": 400,
+  "total_cents": 5400,
+  "due_date": "2026-05-01"
+}
+
+### List invoices — filter by status
+GET {{base}}/invoices?filter[status]=sent
+Authorization: {{finance_token}}
+
+### ============================================================
+### 3. PAYMENTS
+### ============================================================
+
+### Record a payment against the sent invoice
+POST {{base}}/payments
+Authorization: {{finance_token}}
+Content-Type: application/json
+
+{
+  "invoice_id": "<invoice-id>",
+  "amount_cents": 50000,
+  "method": "card",
+  "reference_number": "ch_abc123"
+}
+
+### Try to overpay (should fail: exceeds remaining balance)
+POST {{base}}/payments
+Authorization: {{finance_token}}
+Content-Type: application/json
+
+{
+  "invoice_id": "<invoice-id>",
+  "amount_cents": 999999,
+  "method": "card"
+}
+
+### Record remaining payment to fully cover the invoice
+POST {{base}}/payments
+Authorization: {{finance_token}}
+Content-Type: application/json
+
+{
+  "invoice_id": "<invoice-id>",
+  "amount_cents": 58000,
+  "method": "bank_transfer",
+  "reference_number": "bt_xyz789"
+}
+
+### Mark first payment as completed
+### (if this is the last payment, invoice auto-updates to "paid")
+PATCH {{base}}/payments/<payment-id-1>
+Authorization: {{finance_token}}
+Content-Type: application/json
+
+{
+  "status": "completed"
+}
+
+### Mark second payment as completed -> invoice should auto-mark as paid
+PATCH {{base}}/payments/<payment-id-2>
+Authorization: {{finance_token}}
+Content-Type: application/json
+
+{
+  "status": "completed"
+}
+
+### Verify invoice is now "paid"
+GET {{base}}/invoices/<invoice-id>
+Authorization: {{finance_token}}
+
+### Try to modify a completed payment (should fail)
+PATCH {{base}}/payments/<payment-id-1>
+Authorization: {{finance_token}}
+Content-Type: application/json
+
+{
+  "status": "refunded"
+}
+
+### Try to record payment against a paid invoice (should fail)
+POST {{base}}/payments
+Authorization: {{finance_token}}
+Content-Type: application/json
+
+{
+  "invoice_id": "<invoice-id>",
+  "amount_cents": 1000,
+  "method": "card"
+}
+
+### ============================================================
+### 4. AUDIT TRAIL
+### ============================================================
+
+### View audit logs (direct SQL query or custom endpoint)
+### Audit entries are written automatically by controllers:
+### - Plan changes on customers
+### - All invoice status transitions
+### - Auto-paid invoice events triggered by payment completion
+
+### List payments — filter by method
+GET {{base}}/payments?filter[method]=card
+Authorization: {{finance_token}}
+
+### List payments — filter by status
+GET {{base}}/payments?filter[status]=completed
+Authorization: {{finance_token}}

@@ -24,10 +24,14 @@ endpoints:
   create:
     auth: [admin, member]
     input: [post_id, body, author_name, created_by]
+    controller:
+      before: validate_comment
 
   update:
     auth: [admin, owner]
     input: [body]
+    controller:
+      before: check_comment_ownership
 
   delete:
     auth: [admin, owner]

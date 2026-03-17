@@ -18,6 +18,50 @@ Organizations are tenants; projects and tasks are scoped by `org_id`.
 3. All queries for projects and tasks are automatically filtered by `org_id`
 4. Users with role `super_admin` can access all organizations' data
 
+## Controllers
+
+Each resource declares controllers that enforce enterprise multi-tenant business
+rules. Controller functions live in `resources/<resource>.controller.rs` and run
+before or after the database operation.
+
+### Plan-based resource limits
+
+The `validate_project` controller checks the organization's plan before allowing
+project creation. Free plans are limited to 3 projects, pro to 20, and
+enterprise is unlimited. The limit query only counts non-deleted projects:
+
+```sql
+SELECT COUNT(*) FROM projects WHERE org_id = $1 AND deleted_at IS NULL
+```
+
+### Status transition enforcement
+
+Controllers enforce strict state machines on resources:
+
+- **Projects:** archived projects cannot be reopened (create a new one instead).
+  Only admins can archive, and archiving is blocked while tasks are in progress.
+- **Tasks:** status must follow `todo -> in_progress -> done -> archived`. Only
+  the assignee or an admin can mark a task as done.
+- **Plans:** transitions follow `free -> pro -> enterprise` with no skipping.
+  Downgrading from enterprise to free requires support.
+
+### Cross-resource validation
+
+Controllers query across resource boundaries to maintain consistency:
+
+- Creating a task checks the parent project's status (rejects if archived)
+- Archiving a project checks for in-progress tasks (blocks if any exist)
+- Assigning a task verifies the assignee belongs to the same organization
+- Plan changes on organizations affect future project creation limits
+
+### Tenant-scoped uniqueness checks
+
+Uniqueness constraints are scoped to the tenant where appropriate:
+
+- Organization names are globally unique (case-insensitive)
+- Project names are unique within an organization (case-insensitive)
+- Both checks exclude soft-deleted records
+
 ## Running
 
 ```bash
