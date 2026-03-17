@@ -1,0 +1,63 @@
+resource: incidents
+version: 1
+tenant_key: org_id
+
+schema:
+  id:              { type: uuid, primary: true, generated: true }
+  org_id:          { type: uuid, ref: organizations.id, required: true }
+  service_id:      { type: uuid, ref: services.id, required: true }
+  title:           { type: string, min: 1, max: 200, required: true }
+  slug:            { type: string, min: 1, max: 200, required: true }
+  severity:        { type: enum, values: [sev1, sev2, sev3, sev4], default: sev3 }
+  status:          { type: enum, values: [open, acknowledged, mitigated, resolved, closed], default: open }
+  summary:         { type: string, min: 1, max: 500, required: true }
+  commander_id:    { type: uuid, nullable: true }
+  room_key:        { type: string, min: 1, max: 200, required: true }
+  acknowledged_at: { type: timestamp, nullable: true }
+  resolved_at:     { type: timestamp, nullable: true }
+  created_by:      { type: uuid, required: true }
+  created_at:      { type: timestamp, generated: true }
+  updated_at:      { type: timestamp, generated: true }
+
+endpoints:
+  list:
+    auth: [member, admin]
+    filters: [service_id, severity, status]
+    search: [title, summary]
+    pagination: cursor
+    sort: [created_at, updated_at]
+    cache: { ttl: 15, invalidate_on: [create, update, delete] }
+
+  get:
+    auth: [member, admin]
+
+  create:
+    auth: [member, admin]
+    input: [service_id, title, slug, severity, summary, commander_id, room_key, created_by]
+    controller:
+      before: open_incident
+    events: [incident.opened]
+    jobs: [notify_on_call, refresh_incident_cache]
+
+  update:
+    auth: [member, admin]
+    input: [status, summary, commander_id]
+    controller:
+      before: enforce_incident_update
+      after: write_incident_audit
+    events: [incident.lifecycle_changed]
+    jobs: [refresh_incident_cache]
+
+  delete:
+    auth: [admin]
+    soft_delete: true
+
+relations:
+  service:     { resource: services, type: belongs_to, key: service_id }
+  alerts:      { resource: alerts, type: has_many, foreign_key: incident_id }
+  attachments: { resource: attachments, type: has_many, foreign_key: incident_id }
+
+indexes:
+  - { fields: [org_id, status] }
+  - { fields: [org_id, severity] }
+  - { fields: [service_id, created_at] }

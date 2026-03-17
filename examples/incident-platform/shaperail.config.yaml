@@ -1,0 +1,71 @@
+project: incident-platform
+port: ${SHAPERAIL_PORT:3300}
+workers: auto
+
+database:
+  type: postgresql
+  host: localhost
+  port: ${INCIDENT_POSTGRES_PORT:55432}
+  name: incident_platform
+  pool_size: 20
+
+cache:
+  type: redis
+  url: ${INCIDENT_REDIS_URL:redis://127.0.0.1:56379}
+
+auth:
+  provider: jwt
+  secret_env: JWT_SECRET
+  expiry: 24h
+  refresh_expiry: 30d
+
+storage:
+  provider: local
+
+logging:
+  level: info
+  format: json
+
+events:
+  subscribers:
+    - event: "incident.*"
+      targets:
+        - type: job
+          name: write_status_projection
+        - type: webhook
+          url: "${INCIDENT_OUTBOUND_WEBHOOK_URL:http://127.0.0.1:3300/dev/webhook-sink}"
+        - type: channel
+          name: incidents
+          room: "all-incidents"
+    - event: "alert.received"
+      targets:
+        - type: job
+          name: link_alert_to_incident
+        - type: channel
+          name: incidents
+          room: "all-alerts"
+    - event: "inbound.incident.triggered"
+      targets:
+        - type: job
+          name: open_incident_from_webhook
+  webhooks:
+    secret_env: WEBHOOK_SECRET
+    timeout_secs: 15
+    max_retries: 5
+  inbound:
+    - path: /webhooks/pagerduty
+      secret_env: PAGERDUTY_WEBHOOK_SECRET
+      events: ["incident.triggered", "incident.resolved"]
+
+protocols:
+  - rest
+  - graphql
+  - grpc
+
+graphql:
+  depth_limit: 10
+  complexity_limit: 160
+
+grpc:
+  port: ${INCIDENT_GRPC_PORT:53051}
+  reflection: true

@@ -13,6 +13,7 @@ Start here:
 - [Auth and Ownership](./auth-and-ownership.md)
 - [Migrations and Schema Changes](./migrations-and-schema-changes.md)
 - [Docker Deployment](./docker-deployment.md)
+- [Examples Index](./examples.md)
 - [Blog API Example](./blog-api-example.md)
 
 Published site:

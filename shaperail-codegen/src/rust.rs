@@ -188,7 +188,9 @@ fn generate_registry_module(resources: &[ResourceDefinition]) -> String {
         .join("\n");
 
     format!(
-        r#"{module_lines}
+        r#"#![allow(dead_code)]
+
+{module_lines}
 
 pub fn build_store_registry(pool: sqlx::PgPool) -> shaperail_runtime::db::StoreRegistry {{
     let mut stores: std::collections::HashMap<
@@ -284,7 +286,7 @@ pub struct {pascal}{action_pascal}Input {{
                         format!("{pascal}{action_pascal}Input")
                     };
                     trait_methods.push(format!(
-                        "    /// Before-hook for the {action} endpoint. Called before the DB operation.\n    async fn {before}(ctx: &shaperail_runtime::handlers::controller::ControllerContext, input: &{input_type}) -> Result<(), shaperail_core::ShaperailError>;"
+                        "    /// Before-hook for the {action} endpoint. Called before the DB operation.\n    async fn {before}(ctx: &shaperail_runtime::handlers::ControllerContext, input: &{input_type}) -> Result<(), shaperail_core::ShaperailError>;"
                     ));
                 }
             }
@@ -293,7 +295,7 @@ pub struct {pascal}{action_pascal}Input {{
             if let Some(after) = &controller.after {
                 if !after.starts_with(shaperail_core::WASM_HOOK_PREFIX) {
                     trait_methods.push(format!(
-                        "    /// After-hook for the {action} endpoint. Called after the DB operation.\n    async fn {after}(ctx: &shaperail_runtime::handlers::controller::ControllerContext, result: &serde_json::Value) -> Result<serde_json::Value, shaperail_core::ShaperailError>;"
+                        "    /// After-hook for the {action} endpoint. Called after the DB operation.\n    async fn {after}(ctx: &shaperail_runtime::handlers::ControllerContext, result: &serde_json::Value) -> Result<serde_json::Value, shaperail_core::ShaperailError>;"
                     ));
                 }
             }
@@ -305,7 +307,7 @@ pub struct {pascal}{action_pascal}Input {{
 /// Controller trait for the {resource_name} resource.
 /// Implement this trait in `controllers/{resource_name}.controller.rs`.
 /// The compiler will enforce correct signatures — no guessing needed.
-#[async_trait::async_trait]
+#[shaperail_runtime::db::async_trait]
 pub trait {pascal}Controller {{
 {methods}
 }}
@@ -425,6 +427,11 @@ fn generate_list_helper(
     } else {
         "        let search_term = search.map(|value| value.term.clone());".to_string()
     };
+    let search_param = if search_fields.is_empty() {
+        "_search"
+    } else {
+        "search"
+    };
 
     let search_predicate = if search_fields.is_empty() {
         String::new()
@@ -522,7 +529,7 @@ fn generate_list_helper(
         r###"    async fn {helper_name}(
         &self,
         filters: &FilterSet,
-        search: Option<&SearchParam>,
+        {search_param}: Option<&SearchParam>,
         sort: &SortParam,
         page: &PageRequest,
     ) -> Result<(Vec<ResourceRow>, Value), shaperail_core::ShaperailError> {{
@@ -550,6 +557,7 @@ fn generate_list_helper(
         }}
     }}"###,
         helper_name = endpoint.helper_name,
+        search_param = search_param,
         filter_decls = indent_block(&filter_decls, 2),
         search_decl = indent_block(&search_decl, 2),
         sort_decls = indent_block(&sort_decls, 2),
@@ -917,6 +925,10 @@ fn generate_update_body(context: &ResourceContext<'_>) -> Result<String, String>
 }
 
 fn generate_soft_delete_body(context: &ResourceContext<'_>) -> String {
+    if !has_soft_delete(context.resource) {
+        return generate_hard_delete_body(context);
+    }
+
     format!(
         r###"        let deleted_at = chrono::Utc::now();
         let row = sqlx::query_as!(

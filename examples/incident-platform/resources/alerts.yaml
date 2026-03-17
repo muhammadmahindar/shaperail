@@ -1,0 +1,55 @@
+resource: alerts
+version: 1
+tenant_key: org_id
+
+schema:
+  id:          { type: uuid, primary: true, generated: true }
+  org_id:      { type: uuid, ref: organizations.id, required: true }
+  service_id:  { type: uuid, ref: services.id, required: true }
+  incident_id: { type: uuid, ref: incidents.id, nullable: true }
+  external_id: { type: string, min: 1, max: 200, required: true }
+  source:      { type: enum, values: [pagerduty, prometheus, datadog, manual], required: true }
+  severity:    { type: enum, values: [sev1, sev2, sev3, sev4], default: sev3 }
+  status:      { type: enum, values: [received, deduped, linked, ignored], default: received }
+  fingerprint: { type: string, min: 1, max: 200, required: true }
+  summary:     { type: string, min: 1, max: 500, required: true }
+  payload:     { type: json, required: true }
+  created_by:  { type: uuid, nullable: true }
+  received_at: { type: timestamp, generated: true }
+  created_at:  { type: timestamp, generated: true }
+  updated_at:  { type: timestamp, generated: true }
+
+endpoints:
+  list:
+    auth: [member, admin]
+    filters: [service_id, incident_id, source, severity, status]
+    search: [external_id, summary]
+    pagination: offset
+    sort: [received_at, created_at]
+    cache: { ttl: 20, invalidate_on: [create, update] }
+
+  get:
+    auth: [member, admin]
+
+  create:
+    auth: [ingest, admin]
+    input: [org_id, service_id, incident_id, external_id, source, severity, fingerprint, summary, payload]
+    controller:
+      before: ingest_alert
+    events: [alert.received]
+    jobs: [link_alert_to_incident]
+
+  update:
+    auth: [admin]
+    input: [incident_id, status]
+    controller:
+      before: reconcile_alert_link
+
+relations:
+  service:  { resource: services, type: belongs_to, key: service_id }
+  incident: { resource: incidents, type: belongs_to, key: incident_id }
+
+indexes:
+  - { fields: [org_id, external_id], unique: true }
+  - { fields: [org_id, status] }
+  - { fields: [service_id, received_at] }

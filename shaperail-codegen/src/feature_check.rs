@@ -22,19 +22,11 @@ pub fn check_required_features(resources: &[ResourceDefinition]) -> Vec<Required
     for resource in resources {
         let res = &resource.resource;
 
-        // Check for upload endpoints → storage feature
+        // Upload endpoints are supported by the runtime without an extra Cargo
+        // feature. Keep validating the resource shape elsewhere, but do not
+        // emit a misleading feature warning here.
         if let Some(endpoints) = &resource.endpoints {
             for (action, ep) in endpoints {
-                if ep.upload.is_some() {
-                    required.push(RequiredFeature {
-                        feature: "storage",
-                        reason: format!("resource '{res}' endpoint '{action}' uses upload"),
-                        enable_hint:
-                            "Add to Cargo.toml: shaperail-runtime = { features = [\"storage\"] }"
-                                .into(),
-                    });
-                }
-
                 // Check for WASM controllers → wasm-plugins feature
                 if let Some(controller) = &ep.controller {
                     if controller.has_wasm_before() || controller.has_wasm_after() {
@@ -108,7 +100,7 @@ endpoints:
     }
 
     #[test]
-    fn upload_requires_storage_feature() {
+    fn upload_requires_no_extra_feature() {
         let yaml = r#"
 resource: assets
 version: 1
@@ -127,7 +119,7 @@ endpoints:
 "#;
         let rd = parse_resource(yaml).unwrap();
         let required = check_required_features(&[rd]);
-        assert!(required.iter().any(|f| f.feature == "storage"));
+        assert!(!required.iter().any(|f| f.feature == "storage"));
     }
 
     #[test]

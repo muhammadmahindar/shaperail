@@ -1,0 +1,52 @@
+resource: services
+version: 1
+tenant_key: org_id
+
+schema:
+  id:         { type: uuid, primary: true, generated: true }
+  org_id:     { type: uuid, ref: organizations.id, required: true }
+  name:       { type: string, min: 1, max: 200, required: true }
+  slug:       { type: string, min: 1, max: 200, required: true }
+  tier:       { type: enum, values: [critical, high, standard], default: standard }
+  status:     { type: enum, values: [healthy, degraded, down, maintenance], default: healthy }
+  owner_team: { type: string, min: 1, max: 120, required: true }
+  runbook_url: { type: string, format: url, nullable: true }
+  created_by: { type: uuid, required: true }
+  created_at: { type: timestamp, generated: true }
+  updated_at: { type: timestamp, generated: true }
+
+endpoints:
+  list:
+    auth: [member, admin]
+    filters: [status, tier]
+    search: [name, owner_team]
+    pagination: cursor
+    sort: [created_at, updated_at]
+    cache: { ttl: 30, invalidate_on: [create, update, delete] }
+
+  get:
+    auth: [member, admin]
+
+  create:
+    auth: [admin]
+    input: [name, slug, tier, status, owner_team, runbook_url, created_by]
+    controller:
+      before: prepare_service
+
+  update:
+    auth: [admin]
+    input: [name, tier, status, owner_team, runbook_url]
+    events: [service.status_changed]
+
+  delete:
+    auth: [admin]
+    soft_delete: true
+
+relations:
+  incidents: { resource: incidents, type: has_many, foreign_key: service_id }
+  alerts:    { resource: alerts, type: has_many, foreign_key: service_id }
+
+indexes:
+  - { fields: [org_id, slug], unique: true }
+  - { fields: [org_id, status] }
+  - { fields: [org_id, tier] }

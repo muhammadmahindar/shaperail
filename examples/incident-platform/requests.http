@@ -1,0 +1,196 @@
+### ============================================================
+### Incident Platform Example
+### ============================================================
+### Expected JWT claims for the tokens below:
+### - admin token:   role=admin, tenant_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+### - member token:  role=member, tenant_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+### ============================================================
+
+@base = http://localhost:3300/v1
+@admin_token = Bearer <admin-jwt-token>
+@member_token = Bearer <member-jwt-token>
+@org_id = aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+@user_id = 00000000-0000-0000-0000-000000000001
+@service_id = 11111111-1111-1111-1111-111111111111
+@ingest_key = incident-platform-ingest-key
+
+### ============================================================
+### 0. Development helpers
+### ============================================================
+
+### Mint an admin JWT for local testing
+GET http://localhost:3300/dev/token?user_id={{user_id}}&role=admin&tenant_id={{org_id}}
+
+### Mint a member JWT for local testing
+GET http://localhost:3300/dev/token?user_id={{user_id}}&role=member&tenant_id={{org_id}}
+
+### Inspect locally received outbound webhook deliveries
+GET http://localhost:3300/dev/webhook-sink
+
+### ============================================================
+### 1. Services
+### ============================================================
+
+### Create a service
+POST {{base}}/services
+Authorization: {{admin_token}}
+Content-Type: application/json
+
+{
+  "name": "Worker API",
+  "slug": "worker-api",
+  "tier": "high",
+  "status": "healthy",
+  "owner_team": "Platform",
+  "runbook_url": "https://runbooks.example.com/worker-api",
+  "created_by": "{{user_id}}"
+}
+
+### List services
+GET {{base}}/services?filter[status]=healthy
+Authorization: {{member_token}}
+
+### ============================================================
+### 2. Incidents
+### ============================================================
+
+### Create an incident
+### room_key is required by current validation, but the controller rewrites it
+### from the slug to incident:<slug>.
+POST {{base}}/incidents
+Authorization: {{member_token}}
+Content-Type: application/json
+
+{
+  "service_id": "{{service_id}}",
+  "title": "Payments API latency spike",
+  "slug": "payments-api-latency-spike",
+  "severity": "sev2",
+  "summary": "p95 latency exceeded the on-call threshold for 12 minutes.",
+  "commander_id": "{{user_id}}",
+  "room_key": "temporary-room",
+  "created_by": "{{user_id}}"
+}
+
+### Acknowledge an incident
+PATCH {{base}}/incidents/<incident-id>
+Authorization: {{member_token}}
+Content-Type: application/json
+
+{
+  "status": "acknowledged",
+  "commander_id": "{{user_id}}"
+}
+
+### Resolve an incident
+PATCH {{base}}/incidents/<incident-id>
+Authorization: {{admin_token}}
+Content-Type: application/json
+X-Resolution-Reason: Error budget burn stopped after rollback
+
+{
+  "status": "resolved",
+  "summary": "Rollback completed and latency returned to baseline."
+}
+
+### ============================================================
+### 3. Alerts
+### ============================================================
+
+### Ingest an alert with API key auth
+### Current limitation: API keys are not tenant-bound, so org_id is explicit.
+POST {{base}}/alerts
+X-API-Key: {{ingest_key}}
+Content-Type: application/json
+
+{
+  "org_id": "{{org_id}}",
+  "service_id": "{{service_id}}",
+  "external_id": "pd-evt-0001",
+  "source": "pagerduty",
+  "severity": "sev2",
+  "fingerprint": "payments-api-latency-p95",
+  "summary": "PagerDuty detected sustained latency in Payments API.",
+  "payload": {
+    "source": "pagerduty",
+    "dedupe_key": "payments-api-latency-p95",
+    "triggered_at": "2026-03-17T12:00:00Z"
+  }
+}
+
+### List alerts
+GET {{base}}/alerts?filter[source]=pagerduty
+Authorization: {{member_token}}
+
+### Link an alert to an incident manually
+PATCH {{base}}/alerts/<alert-id>
+Authorization: {{admin_token}}
+Content-Type: application/json
+
+{
+  "incident_id": "<incident-id>",
+  "status": "linked"
+}
+
+### ============================================================
+### 4. Attachments
+### ============================================================
+
+### Upload an attachment
+### Multipart uploads currently require org_id and created_by explicitly.
+POST {{base}}/attachments
+Authorization: {{member_token}}
+Content-Type: multipart/form-data; boundary=ShaperailBoundary
+
+--ShaperailBoundary
+Content-Disposition: form-data; name="org_id"
+
+{{org_id}}
+--ShaperailBoundary
+Content-Disposition: form-data; name="incident_id"
+
+<incident-id>
+--ShaperailBoundary
+Content-Disposition: form-data; name="kind"
+
+log
+--ShaperailBoundary
+Content-Disposition: form-data; name="created_by"
+
+{{user_id}}
+--ShaperailBoundary
+Content-Disposition: form-data; name="file_url"; filename="incident-log.txt"
+Content-Type: text/plain
+
+replace-this-section-with-log-contents
+--ShaperailBoundary--
+
+### ============================================================
+### 5. GraphQL
+### ============================================================
+
+POST http://localhost:3300/graphql
+Authorization: {{member_token}}
+Content-Type: application/json
+
+{
+  "query": "query IncidentBoard { list_incidents(limit: 20, offset: 0) { id title severity status room_key service { id name status } } }"
+}
+
+### ============================================================
+### 6. Inbound webhook route
+### ============================================================
+
+### The signature header must match PAGERDUTY_WEBHOOK_SECRET.
+POST http://localhost:3300/webhooks/pagerduty
+X-Shaperail-Signature: sha256=<replace-with-valid-signature>
+Content-Type: application/json
+
+{
+  "type": "incident.triggered",
+  "service_id": "{{service_id}}",
+  "title": "Payments API paging event",
+  "payload": {
+    "provider": "pagerduty"
+  }
+}

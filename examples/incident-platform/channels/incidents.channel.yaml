@@ -1,0 +1,7 @@
+channel: incidents
+auth: [member, admin]
+rooms: true
+hooks:
+  on_connect: [log_incident_socket_connect]
+  on_disconnect: [log_incident_socket_disconnect]
+  on_message: [validate_incident_socket_message]

@@ -1,0 +1,44 @@
+resource: attachments
+version: 1
+tenant_key: org_id
+
+schema:
+  id:                  { type: uuid, primary: true, generated: true }
+  org_id:              { type: uuid, ref: organizations.id, required: true }
+  incident_id:         { type: uuid, ref: incidents.id, required: true }
+  kind:                { type: enum, values: [screenshot, log, runbook, artifact], required: true }
+  file_url:            { type: file, required: true }
+  file_url_filename:   { type: string, nullable: true }
+  file_url_mime_type:  { type: string, nullable: true }
+  file_url_size:       { type: bigint, nullable: true }
+  created_by:          { type: uuid, required: true }
+  created_at:          { type: timestamp, generated: true }
+  updated_at:          { type: timestamp, generated: true }
+
+endpoints:
+  list:
+    auth: [member, admin]
+    filters: [incident_id, kind]
+    pagination: offset
+    sort: [created_at]
+
+  get:
+    auth: [member, admin]
+
+  create:
+    auth: [member, admin]
+    input: [org_id, incident_id, kind, file_url, file_url_filename, file_url_mime_type, file_url_size, created_by]
+    upload: { field: file_url, storage: local, max_size: 25mb, types: [png, jpg, jpeg, pdf, txt, log, json] }
+    events: [attachment.uploaded]
+    jobs: [scan_attachment]
+
+  delete:
+    auth: [admin, owner]
+    soft_delete: true
+
+relations:
+  incident: { resource: incidents, type: belongs_to, key: incident_id }
+
+indexes:
+  - { fields: [org_id, incident_id] }
+  - { fields: [incident_id, kind] }

@@ -1,0 +1,19 @@
+- id: "11111111-1111-1111-1111-111111111111"
+  org_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+  name: "Payments API"
+  slug: "payments-api"
+  tier: critical
+  status: healthy
+  owner_team: "Payments"
+  runbook_url: "https://runbooks.example.com/payments"
+  created_by: "00000000-0000-0000-0000-000000000001"
+
+- id: "22222222-2222-2222-2222-222222222222"
+  org_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+  name: "Checkout Web"
+  slug: "checkout-web"
+  tier: high
+  status: degraded
+  owner_team: "Checkout"
+  runbook_url: "https://runbooks.example.com/checkout"
+  created_by: "00000000-0000-0000-0000-000000000001"
