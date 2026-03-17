@@ -16,7 +16,7 @@ Complete examples that show how a real Shaperail application is structured.
 | [**Blog API**]({{ '/blog-api-example/' | relative_url }}) | Two resources (posts, comments) with controllers: slug generation, edit rules, comment rate limiting, XSS prevention. Public reads, protected writes, owner-based updates, relations, cursor/offset pagination, soft delete. |
 | **Multi-service workspace** | Two services (users-api, orders-api) showing workspace layout, dependency-ordered startup, and validated saga definitions for order creation. |
 | **Multi-tenant SaaS** | Three resources (organizations, projects, tasks) with controllers: plan-based project limits, status transition enforcement, cross-resource validation, tenant-scoped uniqueness. Shows `tenant_key`, JWT tenant claims, `super_admin` bypass. |
-| **Enterprise SaaS** | Full B2B billing example with customers, invoices, and payments. Controllers: invoice approval workflow (draft→sent→paid), payment validation with idempotency, audit trail with before/after snapshots, plan-based credit limits. |
+| **Controller walkthrough** | See the [Controllers]({{ '/controllers/' | relative_url }}) guide for a complete multi-resource billing walkthrough with manual controller registration, workflow/state-machine controllers, audit logging, payment reconciliation, and testing guidance. |
 | **WASM plugins** | Controller hooks written in TypeScript and Python compiled to WASM. Includes email validation and input normalization examples with the full plugin interface documented. |
 
 Examples show real controller logic patterns in the documentation, but the

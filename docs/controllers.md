@@ -1075,6 +1075,837 @@ found error when that endpoint executes.
 
 ---
 
+## Complete implementation walkthrough
+
+The walkthrough below combines the enterprise patterns above into one larger
+billing service. It is not a separate product template or special doc type; it
+is a normal controller example that shows how a bigger team can wire several
+controllers, resources, and migrations together in one app.
+
+### What you are building
+
+This example is a multi-tenant billing API with:
+
+- customer plan enforcement
+- invoice approval workflow
+- payment validation and invoice reconciliation
+- audit logs for finance-sensitive mutations
+- manual controller registration in the current runtime
+
+The service exposes three versioned resources:
+
+- `customers` for billing accounts and plan limits
+- `invoices` for finance-reviewed invoices with explicit status transitions
+- `payments` for payment capture and automatic invoice reconciliation
+
+All three resources use `tenant_key: org_id`, so the authenticated user's
+`tenant_id` claim scopes every request automatically.
+
+This walkthrough assumes your platform already has an `organizations` resource
+or tenant directory elsewhere. The finance service starts at
+`customers -> invoices -> payments`.
+
+### Project layout
+
+```text
+enterprise-saas/
+  resources/
+    customers.yaml
+    customers.controller.rs
+    invoices.yaml
+    invoices.controller.rs
+    payments.yaml
+    payments.controller.rs
+  migrations/
+    0001_create_customers.sql
+    0002_create_invoices.sql
+    0003_create_payments.sql
+    0004_create_audit_logs.sql
+  src/
+    main.rs
+  seeds/
+    customers.yaml
+  shaperail.config.yaml
+  docker-compose.yml
+  .env
+  requests.http
+```
+
+### Step 1: Scaffold the app
+
+```bash
+shaperail init enterprise-saas
+cd enterprise-saas
+docker compose up -d
+```
+
+Then replace the scaffolded resource files with the ones below, add the
+controller modules, and update `src/main.rs` to register them.
+
+Current limitation: controller modules are not auto-discovered by the
+scaffolded app. The runtime supports them, but you must register them manually.
+
+### Step 2: Define the resource contracts
+
+#### `resources/customers.yaml`
+
+```yaml
+resource: customers
+version: 1
+tenant_key: org_id
+
+schema:
+  id:                 { type: uuid, primary: true, generated: true }
+  org_id:             { type: uuid, ref: organizations.id, required: true }
+  name:               { type: string, min: 1, max: 200, required: true }
+  email:              { type: string, format: email, unique: true, required: true }
+  plan:               { type: enum, values: [free, starter, pro, enterprise], default: starter }
+  status:             { type: enum, values: [active, suspended, closed], default: active }
+  credit_limit_cents: { type: bigint, default: 0 }
+  created_by:         { type: uuid, required: true }
+  created_at:         { type: timestamp, generated: true }
+  updated_at:         { type: timestamp, generated: true }
+
+endpoints:
+  list:
+    auth: [finance, admin]
+    filters: [plan, status]
+    search: [name, email]
+    pagination: cursor
+
+  get:
+    auth: [finance, admin]
+
+  create:
+    auth: [admin]
+    input: [name, email, plan, status, credit_limit_cents]
+    controller:
+      before: validate_customer
+
+  update:
+    auth: [finance, admin]
+    input: [plan, status, credit_limit_cents]
+    controller:
+      before: enforce_plan_change
+
+  delete:
+    auth: [admin]
+    soft_delete: true
+
+indexes:
+  - { fields: [org_id, plan] }
+  - { fields: [email], unique: true }
+```
+
+#### `resources/invoices.yaml`
+
+```yaml
+resource: invoices
+version: 1
+tenant_key: org_id
+
+schema:
+  id:             { type: uuid, primary: true, generated: true }
+  org_id:         { type: uuid, ref: organizations.id, required: true }
+  customer_id:    { type: uuid, ref: customers.id, required: true }
+  invoice_number: { type: string, unique: true, required: true }
+  status:         { type: enum, values: [draft, pending, sent, paid, void, overdue], default: draft }
+  subtotal_cents: { type: bigint, required: true }
+  tax_cents:      { type: bigint, default: 0 }
+  total_cents:    { type: bigint, required: true }
+  due_date:       { type: date, required: true }
+  notes:          { type: string, nullable: true }
+  sent_at:        { type: timestamp, nullable: true }
+  paid_at:        { type: timestamp, nullable: true }
+  created_by:     { type: uuid, required: true }
+  created_at:     { type: timestamp, generated: true }
+  updated_at:     { type: timestamp, generated: true }
+
+endpoints:
+  list:
+    auth: [finance, admin]
+    filters: [status, customer_id]
+    search: [invoice_number]
+    pagination: offset
+    sort: [created_at, due_date]
+
+  get:
+    auth: [finance, admin]
+
+  create:
+    auth: [finance, admin]
+    input: [customer_id, subtotal_cents, tax_cents, total_cents, due_date, notes]
+    controller:
+      before: prepare_invoice
+
+  update:
+    auth: [finance, admin]
+    input: [status, due_date, notes]
+    controller:
+      before: enforce_invoice_workflow
+      after: audit_invoice_change
+
+  delete:
+    auth: [admin]
+    soft_delete: true
+
+indexes:
+  - { fields: [org_id, status] }
+  - { fields: [invoice_number], unique: true }
+  - { fields: [customer_id, due_date] }
+```
+
+#### `resources/payments.yaml`
+
+```yaml
+resource: payments
+version: 1
+tenant_key: org_id
+
+schema:
+  id:               { type: uuid, primary: true, generated: true }
+  org_id:           { type: uuid, ref: organizations.id, required: true }
+  invoice_id:       { type: uuid, ref: invoices.id, required: true }
+  amount_cents:     { type: bigint, required: true }
+  method:           { type: enum, values: [card, ach, wire, manual], required: true }
+  status:           { type: enum, values: [pending, completed, failed, refunded], default: pending }
+  reference_number: { type: string, nullable: true }
+  completed_at:     { type: timestamp, nullable: true }
+  created_by:       { type: uuid, required: true }
+  created_at:       { type: timestamp, generated: true }
+  updated_at:       { type: timestamp, generated: true }
+
+endpoints:
+  list:
+    auth: [finance, admin]
+    filters: [invoice_id, status, method]
+    pagination: offset
+    sort: [created_at]
+
+  get:
+    auth: [finance, admin]
+
+  create:
+    auth: [finance, admin]
+    input: [invoice_id, amount_cents, method, reference_number, status]
+    controller:
+      before: validate_payment
+      after: reconcile_invoice_status
+
+  update:
+    auth: [finance, admin]
+    input: [status, reference_number]
+    controller:
+      before: lock_payment_state
+      after: reconcile_invoice_status
+
+indexes:
+  - { fields: [org_id, status] }
+  - { fields: [invoice_id, created_at], order: desc }
+```
+
+### Step 3: Register controller modules in `src/main.rs`
+
+The scaffold creates:
+
+```rust
+let controllers = generated::build_controller_map();
+```
+
+Replace that with explicit registration:
+
+```rust
+#[path = "../resources/customers.controller.rs"]
+mod customers_controller;
+#[path = "../resources/invoices.controller.rs"]
+mod invoices_controller;
+#[path = "../resources/payments.controller.rs"]
+mod payments_controller;
+
+fn build_custom_controller_map() -> shaperail_runtime::handlers::controller::ControllerMap {
+    let mut controllers = generated::build_controller_map();
+
+    controllers.register("customers", "validate_customer", customers_controller::validate_customer);
+    controllers.register("customers", "enforce_plan_change", customers_controller::enforce_plan_change);
+
+    controllers.register("invoices", "prepare_invoice", invoices_controller::prepare_invoice);
+    controllers.register("invoices", "enforce_invoice_workflow", invoices_controller::enforce_invoice_workflow);
+    controllers.register("invoices", "audit_invoice_change", invoices_controller::audit_invoice_change);
+
+    controllers.register("payments", "validate_payment", payments_controller::validate_payment);
+    controllers.register("payments", "lock_payment_state", payments_controller::lock_payment_state);
+    controllers.register("payments", "reconcile_invoice_status", payments_controller::reconcile_invoice_status);
+
+    controllers
+}
+```
+
+Then replace the scaffolded line with:
+
+```rust
+let controllers = build_custom_controller_map();
+```
+
+Everything else in `AppState` stays the same.
+
+### Step 4: Implement the customer controllers
+
+`customers.controller.rs` enforces plan policy before customer rows are written.
+
+```rust
+use shaperail_core::{FieldError, ShaperailError};
+use shaperail_runtime::handlers::controller::{Context, ControllerResult};
+
+fn plan_rank(plan: &str) -> Option<i32> {
+    match plan {
+        "free" => Some(0),
+        "starter" => Some(1),
+        "pro" => Some(2),
+        "enterprise" => Some(3),
+        _ => None,
+    }
+}
+
+fn max_credit_limit(plan: &str) -> Option<i64> {
+    match plan {
+        "free" => Some(0),
+        "starter" => Some(50_000),
+        "pro" => Some(500_000),
+        "enterprise" => None,
+        _ => Some(0),
+    }
+}
+
+pub async fn validate_customer(ctx: &mut Context) -> ControllerResult {
+    let user = ctx.user.as_ref().ok_or(ShaperailError::Unauthorized)?;
+    ctx.input["created_by"] = serde_json::json!(user.id);
+
+    if !ctx.input.contains_key("org_id") {
+        if let Some(tenant_id) = &ctx.tenant_id {
+            ctx.input["org_id"] = serde_json::json!(tenant_id);
+        }
+    }
+
+    let plan = ctx.input.get("plan").and_then(|v| v.as_str()).unwrap_or("starter");
+    let credit_limit = ctx.input
+        .get("credit_limit_cents")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+
+    if let Some(max) = max_credit_limit(plan) {
+        if credit_limit > max {
+            return Err(ShaperailError::Validation(vec![FieldError {
+                field: "credit_limit_cents".into(),
+                message: format!("plan '{plan}' cannot exceed {max} cents"),
+                code: "plan_limit_exceeded".into(),
+            }]));
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn enforce_plan_change(ctx: &mut Context) -> ControllerResult {
+    let customer_id = match ctx.input.get("id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => return Ok(()),
+    };
+    let new_plan = match ctx.input.get("plan").and_then(|v| v.as_str()) {
+        Some(plan) => plan,
+        None => return Ok(()),
+    };
+
+    let user = ctx.user.as_ref().ok_or(ShaperailError::Unauthorized)?;
+    if user.role != "admin" && user.role != "finance" {
+        return Err(ShaperailError::Forbidden);
+    }
+
+    let current_plan: String = sqlx::query_scalar(
+        "SELECT plan FROM customers WHERE id = $1::uuid"
+    )
+    .bind(customer_id)
+    .fetch_optional(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?
+    .ok_or(ShaperailError::NotFound)?;
+
+    let outstanding_invoices: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(total_cents), 0)
+         FROM invoices
+         WHERE customer_id = $1::uuid
+           AND status IN ('pending', 'sent', 'overdue')"
+    )
+    .bind(customer_id)
+    .fetch_one(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?;
+
+    let current_rank = plan_rank(&current_plan).unwrap_or_default();
+    let new_rank = plan_rank(new_plan).unwrap_or_default();
+
+    if (current_rank - new_rank).abs() > 1 {
+        return Err(ShaperailError::Validation(vec![FieldError {
+            field: "plan".into(),
+            message: "plan changes can only move one tier at a time".into(),
+            code: "invalid_plan_jump".into(),
+        }]));
+    }
+
+    if new_rank < current_rank && outstanding_invoices > 0 {
+        return Err(ShaperailError::Validation(vec![FieldError {
+            field: "plan".into(),
+            message: "cannot downgrade while invoices are still outstanding".into(),
+            code: "outstanding_balance".into(),
+        }]));
+    }
+
+    Ok(())
+}
+```
+
+### Step 5: Implement the invoice controllers
+
+This module handles invoice number generation, workflow transitions, and audit
+logging.
+
+```rust
+use shaperail_core::{FieldError, ShaperailError};
+use shaperail_runtime::handlers::controller::{Context, ControllerResult};
+
+pub async fn prepare_invoice(ctx: &mut Context) -> ControllerResult {
+    let user = ctx.user.as_ref().ok_or(ShaperailError::Unauthorized)?;
+    ctx.input["created_by"] = serde_json::json!(user.id);
+
+    if !ctx.input.contains_key("org_id") {
+        if let Some(tenant_id) = &ctx.tenant_id {
+            ctx.input["org_id"] = serde_json::json!(tenant_id);
+        }
+    }
+
+    let customer_id = ctx.input
+        .get("customer_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ShaperailError::Validation(vec![FieldError {
+            field: "customer_id".into(),
+            message: "customer_id is required".into(),
+            code: "required".into(),
+        }]))?;
+
+    let customer_status: String = sqlx::query_scalar(
+        "SELECT status FROM customers WHERE id = $1::uuid"
+    )
+    .bind(customer_id)
+    .fetch_optional(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?
+    .ok_or(ShaperailError::NotFound)?;
+
+    if customer_status != "active" {
+        return Err(ShaperailError::Validation(vec![FieldError {
+            field: "customer_id".into(),
+            message: "customer must be active before creating invoices".into(),
+            code: "customer_inactive".into(),
+        }]));
+    }
+
+    let subtotal = ctx.input.get("subtotal_cents").and_then(|v| v.as_i64()).unwrap_or(0);
+    let tax = ctx.input.get("tax_cents").and_then(|v| v.as_i64()).unwrap_or(0);
+    let total = ctx.input.get("total_cents").and_then(|v| v.as_i64()).unwrap_or(0);
+
+    if subtotal + tax != total {
+        return Err(ShaperailError::Validation(vec![FieldError {
+            field: "total_cents".into(),
+            message: "total_cents must equal subtotal_cents + tax_cents".into(),
+            code: "invalid_total".into(),
+        }]));
+    }
+
+    let today = chrono::Utc::now().format("%Y%m%d").to_string();
+    let prefix = format!("INV-{today}-%");
+    let count_today: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM invoices WHERE invoice_number LIKE $1"
+    )
+    .bind(prefix)
+    .fetch_one(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?;
+
+    ctx.input["invoice_number"] = serde_json::json!(format!(
+        "INV-{today}-{:04}",
+        count_today + 1
+    ));
+    ctx.input["status"] = serde_json::json!("draft");
+
+    Ok(())
+}
+
+pub async fn enforce_invoice_workflow(ctx: &mut Context) -> ControllerResult {
+    let invoice_id = ctx.input
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ShaperailError::Internal("Missing invoice id".into()))?;
+
+    let current_status: String = sqlx::query_scalar(
+        "SELECT status FROM invoices WHERE id = $1::uuid"
+    )
+    .bind(invoice_id)
+    .fetch_optional(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?
+    .ok_or(ShaperailError::NotFound)?;
+
+    let before_snapshot: serde_json::Value = sqlx::query_scalar(
+        "SELECT row_to_json(i) FROM invoices i WHERE id = $1::uuid"
+    )
+    .bind(invoice_id)
+    .fetch_one(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?;
+
+    ctx.response_headers.push((
+        "X-Audit-Before".into(),
+        before_snapshot.to_string(),
+    ));
+
+    if current_status == "paid" || current_status == "void" {
+        return Err(ShaperailError::Forbidden);
+    }
+
+    let Some(new_status) = ctx.input.get("status").and_then(|v| v.as_str()) else {
+        return Ok(());
+    };
+
+    let role = ctx.user.as_ref().map(|u| u.role.as_str()).unwrap_or("anonymous");
+    let allowed = matches!(
+        (current_status.as_str(), new_status, role),
+        ("draft", "pending", "finance" | "admin")
+            | ("pending", "sent", "finance" | "admin")
+            | ("sent", "paid", "finance" | "admin")
+            | ("overdue", "paid", "finance" | "admin")
+            | ("sent", "overdue", "finance" | "admin")
+            | ("draft", "void", "admin")
+            | ("pending", "void", "admin")
+    );
+
+    if !allowed {
+        return Err(ShaperailError::Validation(vec![FieldError {
+            field: "status".into(),
+            message: format!("cannot transition from '{current_status}' to '{new_status}'"),
+            code: "invalid_transition".into(),
+        }]));
+    }
+
+    if new_status == "sent" {
+        ctx.input["sent_at"] = serde_json::json!(chrono::Utc::now());
+    }
+    if new_status == "paid" {
+        ctx.input["paid_at"] = serde_json::json!(chrono::Utc::now());
+    }
+
+    Ok(())
+}
+
+pub async fn audit_invoice_change(ctx: &mut Context) -> ControllerResult {
+    let Some(data) = &ctx.data else {
+        return Ok(());
+    };
+
+    let before_json = ctx.response_headers
+        .iter()
+        .find(|(k, _)| k == "X-Audit-Before")
+        .map(|(_, v)| v.clone())
+        .unwrap_or_else(|| "null".to_string());
+    ctx.response_headers.retain(|(k, _)| k != "X-Audit-Before");
+
+    let user_id = ctx.user.as_ref()
+        .map(|u| u.id.clone())
+        .unwrap_or_else(|| "system".to_string());
+    let ip_address = ctx.headers
+        .get("x-forwarded-for")
+        .or_else(|| ctx.headers.get("x-real-ip"))
+        .cloned()
+        .unwrap_or_else(|| "unknown".to_string());
+
+    if let Err(e) = sqlx::query(
+        "INSERT INTO audit_logs (user_id, resource_type, resource_id, action, before_data, after_data, ip_address, created_at)
+         VALUES ($1, 'invoices', $2, 'update', $3::jsonb, $4::jsonb, $5, NOW())"
+    )
+    .bind(&user_id)
+    .bind(data["id"].as_str().unwrap_or("unknown"))
+    .bind(&before_json)
+    .bind(data.to_string())
+    .bind(&ip_address)
+    .execute(&ctx.pool)
+    .await
+    {
+        tracing::error!("failed to insert audit log: {e}");
+    }
+
+    Ok(())
+}
+```
+
+### Step 6: Implement the payment controllers
+
+Payment logic validates business rules on create and keeps invoice status in
+sync after create/update.
+
+```rust
+use shaperail_core::{FieldError, ShaperailError};
+use shaperail_runtime::handlers::controller::{Context, ControllerResult};
+
+pub async fn validate_payment(ctx: &mut Context) -> ControllerResult {
+    let user = ctx.user.as_ref().ok_or(ShaperailError::Unauthorized)?;
+    ctx.input["created_by"] = serde_json::json!(user.id);
+
+    if !ctx.input.contains_key("org_id") {
+        if let Some(tenant_id) = &ctx.tenant_id {
+            ctx.input["org_id"] = serde_json::json!(tenant_id);
+        }
+    }
+
+    let invoice_id = ctx.input
+        .get("invoice_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ShaperailError::Validation(vec![FieldError {
+            field: "invoice_id".into(),
+            message: "invoice_id is required".into(),
+            code: "required".into(),
+        }]))?;
+    let amount = ctx.input.get("amount_cents").and_then(|v| v.as_i64()).unwrap_or(0);
+
+    let (invoice_status, invoice_total): (String, i64) = sqlx::query_as(
+        "SELECT status, total_cents FROM invoices WHERE id = $1::uuid"
+    )
+    .bind(invoice_id)
+    .fetch_optional(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?
+    .ok_or(ShaperailError::NotFound)?;
+
+    if invoice_status != "sent" && invoice_status != "overdue" {
+        return Err(ShaperailError::Validation(vec![FieldError {
+            field: "invoice_id".into(),
+            message: "payments are allowed only for sent or overdue invoices".into(),
+            code: "invoice_not_payable".into(),
+        }]));
+    }
+
+    let already_recorded: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(amount_cents), 0)
+         FROM payments
+         WHERE invoice_id = $1::uuid
+           AND status IN ('pending', 'completed')"
+    )
+    .bind(invoice_id)
+    .fetch_one(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?;
+
+    if amount > invoice_total - already_recorded {
+        return Err(ShaperailError::Validation(vec![FieldError {
+            field: "amount_cents".into(),
+            message: "payment exceeds invoice remaining balance".into(),
+            code: "overpayment".into(),
+        }]));
+    }
+
+    let duplicate: bool = sqlx::query_scalar(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM payments
+            WHERE invoice_id = $1::uuid
+              AND amount_cents = $2
+              AND created_at > NOW() - INTERVAL '5 minutes'
+        )"
+    )
+    .bind(invoice_id)
+    .bind(amount)
+    .fetch_one(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?;
+
+    if duplicate {
+        return Err(ShaperailError::Conflict(
+            "duplicate payment request detected".into(),
+        ));
+    }
+
+    if ctx.input.get("status").and_then(|v| v.as_str()) == Some("completed") {
+        ctx.input["completed_at"] = serde_json::json!(chrono::Utc::now());
+    }
+
+    Ok(())
+}
+
+pub async fn lock_payment_state(ctx: &mut Context) -> ControllerResult {
+    let payment_id = ctx.input
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ShaperailError::Internal("Missing payment id".into()))?;
+
+    let current_status: String = sqlx::query_scalar(
+        "SELECT status FROM payments WHERE id = $1::uuid"
+    )
+    .bind(payment_id)
+    .fetch_optional(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?
+    .ok_or(ShaperailError::NotFound)?;
+
+    if current_status == "completed" || current_status == "refunded" {
+        return Err(ShaperailError::Forbidden);
+    }
+
+    if ctx.input.get("status").and_then(|v| v.as_str()) == Some("completed") {
+        ctx.input["completed_at"] = serde_json::json!(chrono::Utc::now());
+    }
+
+    Ok(())
+}
+
+pub async fn reconcile_invoice_status(ctx: &mut Context) -> ControllerResult {
+    let Some(data) = &ctx.data else {
+        return Ok(());
+    };
+    let payment_status = data["status"].as_str().unwrap_or("");
+    if payment_status != "completed" {
+        return Ok(());
+    }
+
+    let invoice_id = data["invoice_id"]
+        .as_str()
+        .ok_or_else(|| ShaperailError::Internal("payment record missing invoice_id".into()))?;
+
+    let paid_total: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(amount_cents), 0)
+         FROM payments
+         WHERE invoice_id = $1::uuid
+           AND status = 'completed'"
+    )
+    .bind(invoice_id)
+    .fetch_one(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?;
+
+    let invoice_total: i64 = sqlx::query_scalar(
+        "SELECT total_cents FROM invoices WHERE id = $1::uuid"
+    )
+    .bind(invoice_id)
+    .fetch_one(&ctx.pool)
+    .await
+    .map_err(|e| ShaperailError::Internal(e.to_string()))?;
+
+    if paid_total >= invoice_total {
+        sqlx::query(
+            "UPDATE invoices
+             SET status = 'paid',
+                 paid_at = COALESCE(paid_at, NOW())
+             WHERE id = $1::uuid"
+        )
+        .bind(invoice_id)
+        .execute(&ctx.pool)
+        .await
+        .map_err(|e| ShaperailError::Internal(e.to_string()))?;
+    }
+
+    Ok(())
+}
+```
+
+### Step 7: Add the manual audit log migration
+
+`shaperail migrate` can generate the initial `customers`, `invoices`, and
+`payments` create-table files, but the cross-cutting `audit_logs` table is a
+manual SQL migration:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id TEXT NOT NULL,
+  resource_type TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  before_data JSONB NOT NULL DEFAULT 'null'::jsonb,
+  after_data JSONB NOT NULL DEFAULT 'null'::jsonb,
+  ip_address TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_resource
+  ON audit_logs (resource_type, resource_id);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at
+  ON audit_logs (created_at DESC);
+```
+
+Apply it with the normal migration flow:
+
+```bash
+shaperail migrate
+```
+
+### Step 8: Exercise the workflow
+
+The repository already includes `examples/enterprise-saas/requests.http` with a
+full request sequence. The critical path is:
+
+1. Create a customer on `starter` or `pro`
+2. Create a draft invoice for that customer
+3. Move invoice `draft -> pending -> sent`
+4. Create one or more payments
+5. Mark a payment `completed`
+6. Watch the invoice auto-transition to `paid` once completed payments cover `total_cents`
+
+Good failure-path checks:
+
+- create a `free` customer with non-zero credit limit
+- skip from `free` straight to `pro`
+- create an invoice for a suspended customer
+- move an invoice from `sent` back to `draft`
+- overpay an invoice
+- modify a completed payment
+
+### Step 9: Test the business rules
+
+Use a mix of controller unit tests and HTTP integration tests.
+
+Recommended unit tests:
+
+- `validate_customer` rejects plan/credit mismatches
+- `enforce_plan_change` blocks downgrade with outstanding invoices
+- `prepare_invoice` generates `invoice_number` and rejects inactive customers
+- `enforce_invoice_workflow` allows only valid transitions per role
+- `validate_payment` blocks overpayment and duplicate requests
+- `reconcile_invoice_status` marks the invoice as paid when the balance reaches zero
+
+Recommended integration tests:
+
+- finance user can move `pending -> sent`
+- member cannot send or void an invoice
+- creating two completed payments updates the invoice to `paid`
+- tenant A cannot read tenant B's customers, invoices, or payments
+- `audit_logs` rows are written after invoice updates
+
+Use the same test patterns shown in [Testing]({{ '/testing/' | relative_url }})
+for `Context` unit tests and `actix_web::test` endpoint tests.
+
+### Step 10: Operating notes
+
+- Keep customer, invoice, and payment controllers narrow. Each one should own a
+  specific financial invariant.
+- Put cross-resource bookkeeping in controllers only when it must happen in the
+  request lifecycle. Move slower side effects to jobs.
+- Treat invoice and payment state changes as contract-critical. Add explicit
+  tests for every allowed and disallowed transition.
+- Keep `audit_logs` append-only.
+- For later schema edits, remember that follow-up SQL migrations are still
+  manual today.
+
+---
+
 ## Controllers vs jobs vs events
 
 | Mechanism | When it runs | Blocks response | Use case |
